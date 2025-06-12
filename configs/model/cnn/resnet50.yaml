@@ -1,0 +1,28 @@
+name: resnet50
+architecture: cnn
+_target_: src.models.cnn.resnet.ResNet50
+
+# Model parameters
+num_classes: ${dataset.num_classes}
+in_channels: 1  # Grayscale CARS images
+pretrained: true
+freeze_backbone: false
+
+# Architecture-specific parameters
+dropout_rate: 0.3  # Higher dropout for larger model
+hidden_dim: 512
+
+# Training parameters
+learning_rate: 0.0005  # Lower learning rate for larger model
+weight_decay: 0.01
+
+# Quality-aware preprocessing
+quality_aware: true
+
+# Feature extraction
+use_attention: false
+pool_type: avg  # avg or max
+
+# Note: ResNet50 has 25.6M parameters vs ResNet18's 11.2M
+# May need smaller batch size if memory issues occur
+# batch_size: 24  # Uncomment if needed

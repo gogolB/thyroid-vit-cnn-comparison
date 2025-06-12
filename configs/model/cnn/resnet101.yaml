@@ -1,0 +1,31 @@
+name: resnet101
+architecture: cnn
+_target_: src.models.cnn.resnet.ResNet101
+
+# Model parameters
+num_classes: ${dataset.num_classes}
+in_channels: 1  # Grayscale CARS images
+pretrained: true
+freeze_backbone: false
+
+# Architecture-specific parameters
+dropout_rate: 0.35  # Highest dropout for deepest model
+hidden_dim: 512
+
+# Training parameters
+learning_rate: 0.0003  # Lowest learning rate for deepest model
+weight_decay: 0.01
+
+# Quality-aware preprocessing
+quality_aware: true
+
+# Feature extraction
+use_attention: false
+pool_type: avg  # avg or max
+
+# Note: ResNet101 has 44.5M parameters - 4x larger than ResNet18
+# Will likely need smaller batch size
+# batch_size: 16  # Uncomment if memory issues occur
+
+# May benefit from gradient accumulation
+# accumulate_grad_batches: 2  # Uncomment to enable

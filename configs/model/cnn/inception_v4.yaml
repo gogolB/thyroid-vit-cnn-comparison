@@ -1,0 +1,28 @@
+name: inception_v4
+architecture: cnn
+_target_: src.models.cnn.inception.InceptionV4
+
+# Model parameters
+num_classes: ${dataset.num_classes}
+in_channels: 1  # Grayscale CARS images
+init_weights: true  # Initialize from scratch
+aux_logits: false  # No auxiliary classifiers for simplicity
+
+# Inception-specific parameters
+dropout_rate: 0.2  # Conservative dropout for Inception
+quality_aware: true  # Enable quality-aware features
+
+# Training parameters (optimized for Inception-v4)
+learning_rate: 0.001  # Standard learning rate
+weight_decay: 0.0001  # Light weight decay
+
+# Inception-v4 characteristics:
+# - Complex multi-branch architecture
+# - ~13M parameters (simplified version)
+# - Excellent feature extraction
+# - May need careful initialization
+
+# Training tips:
+# - Benefits from longer training
+# - May need gradient clipping
+# - Consider warmup for stability

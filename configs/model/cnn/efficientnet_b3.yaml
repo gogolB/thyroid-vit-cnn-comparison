@@ -1,0 +1,27 @@
+name: efficientnet_b3
+architecture: cnn
+_target_: src.models.cnn.efficientnet.EfficientNetB3
+
+# Model parameters
+num_classes: ${dataset.num_classes}
+in_channels: 1  # Grayscale CARS images
+pretrained: true
+freeze_backbone: false
+
+# EfficientNet-B3 specific parameters
+dropout_rate: 0.3  # Higher dropout for larger model
+drop_connect_rate: 0.3  # Higher drop connect for B3
+
+# Training parameters (optimized for EfficientNet-B3)
+learning_rate: 0.0003  # Even lower for the largest model
+weight_decay: 0.001
+
+# Quality-aware preprocessing
+quality_aware: true
+
+# Feature extraction
+pool_type: avg  # EfficientNet uses global average pooling by default
+
+# B3 may need smaller batch size due to memory constraints
+# This can be overridden at runtime if needed
+# batch_size: 16  # Uncomment if memory issues occur

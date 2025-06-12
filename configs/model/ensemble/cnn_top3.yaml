@@ -1,0 +1,28 @@
+# configs/model/ensemble/cnn_top3.yaml
+
+_target_: src.models.ensemble.cnn_ensemble.ThyroidCNNEnsemble
+
+# Model checkpoints to include
+checkpoint_paths:
+  resnet50: ${paths.checkpoint_dir}/resnet50-best.ckpt
+  efficientnet_b0: ${paths.checkpoint_dir}/efficientnet_b0-best.ckpt
+  densenet121: ${paths.checkpoint_dir}/densenet121-best.ckpt
+
+# Ensemble configuration
+num_classes: 2
+ensemble_method: weighted_avg  # Options: avg, weighted_avg, voting
+
+# Weights for weighted averaging (null = automatic based on accuracy)
+weights: null
+
+# Temperature scaling for calibration
+temperature: 1.0
+
+# Device
+device_type: ${device}
+
+# Model-specific accuracies (for automatic weighting)
+model_accuracies:
+  resnet50: 0.9118
+  efficientnet_b0: 0.8971
+  densenet121: 0.8824

@@ -1,0 +1,25 @@
+batch_size: 32
+num_epochs: 100
+optimizer:
+  _target_: torch.optim.AdamW
+  lr: 0.001
+  weight_decay: 0.01
+  betas:
+    - 0.9
+    - 0.999
+scheduler:
+  _target_: torch.optim.lr_scheduler.CosineAnnealingLR
+  T_max: 100
+  eta_min: 1e-06
+loss:
+  _target_: torch.nn.CrossEntropyLoss
+  label_smoothing: 0.1
+early_stopping:
+  patience: 15
+  min_delta: 0.001
+  mode: max
+  monitor: val/acc
+gradient_clip_val: 1.0
+accumulate_grad_batches: 1
+precision: "16-mixed"
+deterministic: false

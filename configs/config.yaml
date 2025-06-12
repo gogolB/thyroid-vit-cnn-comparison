@@ -1,0 +1,24 @@
+defaults:
+  - model: resnet50
+  - dataset: cars
+  - training: standard
+  - augmentation: basic
+  - trainer: default  # Add trainer configuration
+  - _self_
+
+experiment_name: "${model.name}_${dataset.name}_${now:%Y-%m-%d_%H-%M-%S}"
+seed: 42
+device: auto  # Changed from cuda to auto for MPS support
+
+paths:
+  data_dir: "${hydra:runtime.cwd}/data"
+  log_dir: "${hydra:runtime.cwd}/logs"
+  checkpoint_dir: "${hydra:runtime.cwd}/checkpoints"
+
+wandb:
+  project: "thyroid-classification"
+  entity: null
+  tags:
+    - ${model.architecture}
+    - ${dataset.name}
+  mode: online

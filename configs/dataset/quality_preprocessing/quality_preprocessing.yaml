@@ -1,0 +1,46 @@
+# Quality-aware preprocessing configuration
+quality_preprocessing:
+  enabled: true
+  quality_report_path: ${hydra:runtime.cwd}/reports/quality_report.json
+  
+  # Parameters for each issue type
+  extreme_dark:
+    gamma: 0.6  # Gamma < 1 brightens image
+    clahe_clip_limit: 3.0
+    clahe_grid_size: [8, 8]
+  
+  low_contrast:
+    clahe_clip_limit: 2.0
+    clahe_grid_size: [8, 8]
+    contrast_factor: 1.5
+  
+  artifacts:
+    percentile_clip: 99.5  # Clip at 99.5th percentile
+    median_filter_size: 5
+    bilateral_d: 9
+    bilateral_sigma_color: 75
+    bilateral_sigma_space: 75
+  
+  # Adaptive normalization settings
+  normalization:
+    method: percentile  # or minmax
+    percentiles: [1, 99]
+    quality_aware: true
+
+# Quality-stratified training
+quality_stratified_training:
+  enabled: true
+  sampling_weights:
+    high_quality: 1.0
+    extreme_dark: 2.0  # Oversample problematic images
+    low_contrast: 2.0
+    artifacts: 1.5
+    multiple_issues: 2.5
+  
+  # Different loss weights for different quality tiers
+  loss_weights:
+    high_quality: 1.0
+    extreme_dark: 0.8  # Reduce weight for very problematic images
+    low_contrast: 0.9
+    artifacts: 0.9
+    multiple_issues: 0.7

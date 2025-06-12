@@ -1,0 +1,24 @@
+name: resnet18
+architecture: cnn
+_target_: src.models.cnn.resnet.ResNet18
+
+# Model parameters
+num_classes: ${dataset.num_classes}
+in_channels: 1  # Grayscale CARS images
+pretrained: true
+freeze_backbone: false
+
+# Architecture-specific parameters
+dropout_rate: 0.2
+hidden_dim: 512
+
+# Training parameters
+learning_rate: 0.001
+weight_decay: 0.01
+
+# Quality-aware preprocessing
+quality_aware: true
+
+# Feature extraction
+use_attention: false
+pool_type: avg  # avg or max

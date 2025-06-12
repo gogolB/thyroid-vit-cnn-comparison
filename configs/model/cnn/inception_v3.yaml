@@ -1,0 +1,33 @@
+
+name: inception_v3
+architecture: cnn
+_target_: src.models.cnn.inception.InceptionV3
+
+# Model parameters
+num_classes: ${dataset.num_classes}
+in_channels: 1  # Grayscale CARS images
+aux_logits: false  # Disable auxiliary classifiers for stability
+transform_input: false  # Don't use ImageNet normalization
+
+# Inception-v3 specific parameters
+dropout_rate: 0.5  # Standard dropout for Inception-v3
+quality_aware: true  # Enable quality-aware features
+
+# Training parameters (optimized for Inception-v3)
+learning_rate: 0.001  # Standard learning rate
+weight_decay: 0.0001  # Light weight decay
+
+# IMPORTANT: Fixed initialization
+# Previous version had initialization issues causing 51% accuracy
+# This version uses proper truncated normal initialization
+
+# Key differences from failed version:
+# 1. Proper weight initialization with truncated normal
+# 2. Quality-aware features for CARS images
+# 3. Adapted for single-channel input
+# 4. No pretrained weights (training from scratch)
+
+# Training recommendations:
+# - May need warmup for first few epochs
+# - Consider gradient clipping if unstable
+# - Benefits from longer training (100+ epochs)

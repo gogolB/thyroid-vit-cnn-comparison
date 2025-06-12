@@ -1,0 +1,15 @@
+{
+  "total_images": 450,
+  "class_distribution": {
+    "normal": 225,
+    "cancerous": 225
+  },
+  "unique_patients": 450,
+  "image_paths": [
+    "data/raw/normal/normal_164.tif",
+    "data/raw/normal/normal_19.tif",
+    "data/raw/normal/normal_170.tif",
+    "data/raw/normal/normal_31.tif",
+    "data/raw/normal/normal_158.tif"
+  ]
+}

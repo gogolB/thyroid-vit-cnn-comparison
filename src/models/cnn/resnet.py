@@ -344,10 +344,10 @@ class ResNet18Lightning(pl.LightningModule):
         self.val_f1(preds, labels)
         
         # Logging
-        self.log('val/loss', loss, on_epoch=True, prog_bar=True)
-        self.log('val/acc', self.val_acc, on_epoch=True, prog_bar=True)
-        self.log('val/auc', self.val_auc, on_epoch=True)
-        self.log('val/f1', self.val_f1, on_epoch=True)
+        self.log('val_loss', loss, on_epoch=True, prog_bar=True)
+        self.log('val_acc', self.val_acc, on_epoch=True, prog_bar=True)
+        self.log('val_auc', self.val_auc, on_epoch=True)
+        self.log('val_f1', self.val_f1, on_epoch=True)
         
         # Store for epoch end analysis
         self.validation_step_outputs.append({
@@ -375,13 +375,13 @@ class ResNet18Lightning(pl.LightningModule):
             high_quality_mask = quality_sum < 0.5
             if high_quality_mask.any():
                 hq_acc = (all_preds[high_quality_mask] == all_labels[high_quality_mask]).float().mean()
-                self.log('val/acc_high_quality', hq_acc)
+                self.log('val_acc_high_quality', hq_acc)
             
             # Low quality: any issues
             low_quality_mask = quality_sum >= 0.5
             if low_quality_mask.any():
                 lq_acc = (all_preds[low_quality_mask] == all_labels[low_quality_mask]).float().mean()
-                self.log('val/acc_low_quality', lq_acc)
+                self.log('val_acc_low_quality', lq_acc)
         
         self.validation_step_outputs.clear()
     
@@ -423,7 +423,7 @@ class ResNet18Lightning(pl.LightningModule):
                 'optimizer': optimizer,
                 'lr_scheduler': {
                     'scheduler': scheduler,
-                    'monitor': 'val/acc',
+                    'monitor': 'val_acc',
                     'frequency': 1
                 }
             }

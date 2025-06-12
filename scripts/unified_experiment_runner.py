@@ -344,8 +344,8 @@ class UnifiedExperimentRunner:
         # Model checkpoint
         checkpoint_callback = ModelCheckpoint(
             dirpath=cfg.paths.checkpoint_dir,
-            filename=f"{cfg.model.name}-{{epoch:02d}}-{{val_acc:.4f}}",  # Changed val/acc to val_acc
-            monitor='val/acc',  # Keep original metric name for monitoring
+            filename=f"{cfg.model.name}-{{epoch:02d}}-{{val_acc:.4f}}",  # Changed val_acc to val_acc
+            monitor='val_acc',  # Keep original metric name for monitoring
             mode='max',
             save_top_k=3,
             save_last=True,
@@ -435,7 +435,7 @@ class UnifiedExperimentRunner:
         
         # Get training results
         train_acc = trainer.callback_metrics.get('train/acc_epoch', 0.0)
-        val_acc = trainer.callback_metrics.get('val/acc', 0.0)
+        val_acc = trainer.callback_metrics.get('val_acc', 0.0)
         
         results = {
             'train_acc': float(train_acc),
@@ -450,7 +450,7 @@ class UnifiedExperimentRunner:
             test_results = trainer.test(model, dataloaders=data_loaders['test'])
             
             if test_results:
-                test_acc = test_results[0].get('test/acc', 0.0)
+                test_acc = test_results[0].get('test_acc', 0.0)
                 results['test_acc'] = float(test_acc)
         
         # Save final results

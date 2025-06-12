@@ -18,7 +18,7 @@ early_stopping:
   patience: 15
   min_delta: 0.001
   mode: max
-  monitor: val/acc
+  monitor: val_acc
 gradient_clip_val: 1.0
 accumulate_grad_batches: 1
 precision: "16-mixed"

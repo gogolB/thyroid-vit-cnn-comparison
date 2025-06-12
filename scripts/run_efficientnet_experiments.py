@@ -120,8 +120,8 @@ def run_single_experiment(model_name: str, args, results: dict):
                         test_acc = float(match.group(1))
                 
                 # Look for validation accuracy in the progress bar or logs
-                if "val/acc" in line:
-                    match = re.search(r"val/acc[:\s=]+([0-9.]+)", line)
+                if "val_acc" in line:
+                    match = re.search(r"val_acc[:\s=]+([0-9.]+)", line)
                     if match:
                         last_val_acc = float(match.group(1))
             

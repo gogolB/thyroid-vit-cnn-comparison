@@ -41,7 +41,7 @@ early_stopping:
   patience: 20  # More patience for EfficientNet
   min_delta: 0.001
   mode: max
-  monitor: val/acc
+  monitor: val_acc
 
 # Gradient clipping
 gradient_clip_val: 1.0

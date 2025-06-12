@@ -161,10 +161,10 @@ class ThyroidCNNModule(pl.LightningModule):
         f1 = self.val_f1(preds, y)
         
         # Log metrics
-        self.log('val/loss', loss, on_step=False, on_epoch=True, prog_bar=True)
-        self.log('val/acc', acc, on_step=False, on_epoch=True, prog_bar=True)
-        self.log('val/auc', auc, on_step=False, on_epoch=True, prog_bar=True)
-        self.log('val/f1', f1, on_step=False, on_epoch=True, prog_bar=True)
+        self.log('val_loss', loss, on_step=False, on_epoch=True, prog_bar=True)
+        self.log('val_acc', acc, on_step=False, on_epoch=True, prog_bar=True)
+        self.log('val_auc', auc, on_step=False, on_epoch=True, prog_bar=True)
+        self.log('val_f1', f1, on_step=False, on_epoch=True, prog_bar=True)
         
         return {'val_loss': loss, 'val_acc': acc}
     
@@ -178,8 +178,8 @@ class ThyroidCNNModule(pl.LightningModule):
         acc = self.test_acc(preds, y)
         
         # Log metrics
-        self.log('test/loss', loss, on_step=False, on_epoch=True)
-        self.log('test/acc', acc, on_step=False, on_epoch=True)
+        self.log('test_loss', loss, on_step=False, on_epoch=True)
+        self.log('test_acc', acc, on_step=False, on_epoch=True)
         
         return {'test_loss': loss, 'test_acc': acc}
     
@@ -188,7 +188,7 @@ class ThyroidCNNModule(pl.LightningModule):
         test_acc = self.test_acc.compute()
         
         # Log final test results
-        self.log('test/final_acc', test_acc)
+        self.log('test_final_acc', test_acc)
         
         # Print results
         console.print(f"\n[bold green]Test Results:[/bold green]")
@@ -214,7 +214,7 @@ class ThyroidCNNModule(pl.LightningModule):
             'optimizer': optimizer,
             'lr_scheduler': {
                 'scheduler': scheduler,
-                'monitor': 'val/loss',
+                'monitor': 'val_loss',
                 'interval': 'epoch',
                 'frequency': 1
             }
@@ -318,8 +318,8 @@ def main(cfg: DictConfig) -> None:
     # Model checkpoint
     checkpoint_callback = ModelCheckpoint(
         dirpath=cfg.paths.checkpoint_dir,
-        filename=f"{cfg.model.name}-{{epoch:02d}}-{{val_acc:.4f}}",  # Changed val/acc to val_acc
-        monitor='val/acc',  # Keep original metric name for monitoring
+        filename=f"{cfg.model.name}-{{epoch:02d}}-{{val_acc:.4f}}",  # Changed val_acc to val_acc
+        monitor='val_acc',  # Keep original metric name for monitoring
         mode='max',
         save_top_k=3,
         save_last=True,

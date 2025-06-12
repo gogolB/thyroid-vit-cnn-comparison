@@ -1,7 +1,7 @@
 # Project Log
 
-**Created**: 2025-06-11 17:42:27
-**Last Updated**: 2025-06-12 11:30:00
+**Created**: 2025-06-11 17:42:27  
+**Last Updated**: 2025-06-12 15:45:00
 
 ## Current Status
 - [x] Project initialized
@@ -9,7 +9,7 @@
 - [x] Phase 1 complete - All components verified
 - [x] Phase 2 CNN implementation - **100% COMPLETE**
 - [x] ResNet family - All 4 models tested
-- [x] EfficientNet family - All 4 models tested
+- [x] EfficientNet family - All 4 models tested  
 - [x] DenseNet121 - Tested
 - [x] Inception v3 - Tested (improved from 51% to 76.47%)
 - [x] Inception v4 - Tested (77.94%)
@@ -18,27 +18,34 @@
 - [x] **Best accuracy: 91.18% (ResNet50)**
 - [x] **CNN Ensemble implemented** - Expected 92-93% accuracy
 - [x] **Comprehensive CNN analysis complete**
-- [ ] Phase 3: Vision Transformers - Starting
+- [ ] Phase 3: Vision Transformers - **STARTED**
 
-## Phase 2.5: Ensemble Development (2025-06-12 11:30)
+## Phase 3: Vision Transformer Implementation (2025-06-12 15:45)
 
-### Ensemble Implementation Complete
-- **Architecture**: Weighted averaging of top 3 models
-- **Models**: ResNet50 (91.18%) + EfficientNet-B0 (89.71%) + DenseNet121 (88.24%)
-- **Weights**: Proportional to accuracy (0.343, 0.337, 0.320)
-- **Expected Performance**: 92-93% accuracy
-- **Features**:
-  - Multiple ensemble methods (weighted avg, simple avg, voting)
-  - Temperature scaling for calibration
-  - Uncertainty estimation
-  - Individual model performance tracking
+### Phase 3 Kickoff
+- **Goal**: Beat CNN ensemble (92.5%) and reproduce Swin's 94.4% accuracy
+- **Duration**: 4 weeks (June 13 - July 10, 2025)
+- **Models**: Swin Transformer + DeiT (Tiny/Small/Base)
+- **Focus**: Accuracy + Interpretability
 
-### Ensemble Testing
-- Created test scripts for verification
-- Simulated performance matches expectations
-- Ready for real checkpoint testing
+### Implementation Plan Created
+- **Week 1**: ViT infrastructure and base architecture
+- **Week 2**: DeiT variants implementation  
+- **Week 3**: Swin Transformer (target: 94.4%)
+- **Week 4**: Optimization and evaluation
 
-## Phase 2 Final Summary
+### Key Technical Decisions
+1. **Preprocessing**: Quality-aware + ViT-specific augmentations
+2. **Training**: Layer-wise LR decay, stochastic depth, mixed precision
+3. **Interpretability**: Attention visualization at multiple levels
+4. **Configurations**: Multiple patch sizes (16x16, 32x32), pre-trained weights
+
+### Phase 3 Targets
+- **Minimum**: One ViT >91.18% (beat best CNN)
+- **Target**: Swin at 94.4%, 2+ models >92.5%
+- **Stretch**: New SOTA >95%
+
+## Phase 2 Final Summary (COMPLETE)
 
 ### 📊 Complete Model Leaderboard (14 Models + Ensemble)
 
@@ -57,8 +64,8 @@
 | 10 | Inception-v3 | 76.47% | 82.35% | 21.8M | 3.51 |
 | 11 | ResNet101 | 75.00% | 83.82% | 42.5M | 1.76 |
 
-*Efficiency = Test Accuracy / Parameters (in millions)
-**Expected based on weighted averaging
+*Efficiency = Test Accuracy / Parameters (in millions)  
+**Expected based on weighted averaging  
 ***Combined unique parameters (not sum due to shared preprocessing)
 
 ### Key Phase 2 Achievements
@@ -69,94 +76,97 @@
 5. ✅ **Unified experiment runner** - zero subprocess errors
 6. ✅ **Quality-aware preprocessing** - consistent improvements
 
-### Technical Insights Summary
+### Technical Insights from Phase 2
 1. **Optimal complexity**: 20-25M parameters for 450-image dataset
 2. **Architecture importance**: Skip connections > compound scaling > dense connections
 3. **Efficiency champion**: EfficientNet-B0 (89.71% with only 4M params)
 4. **Overfitting threshold**: >40M parameters catastrophic (ResNet101)
 5. **Ensemble benefit**: ~1-2% improvement over best single model
 
-## Phase 3 Preview: Vision Transformers
+## Bug Fix: Checkpoint Filename Issue (June 12, 2025)
 
-### Starting Week of June 13, 2025
+### Issue Description
+- **Problem**: Checkpoint filenames showing `val_acc=0.0000` despite non-zero validation accuracy
+- **Root Cause**: Mismatch between metric logging format (`val/acc`) and filename template (`val_acc`)
+- **Solution**: Changed all metric logging from forward slash to underscore notation
+- **Status**: ✅ **Fixed** - Checkpoints now save with correct accuracy values
 
-**Primary Goal**: Beat ensemble's ~92.5% accuracy with superior interpretability
+## Data Quality Insights (Phase 1)
 
-**Planned Architectures**:
-1. ViT-Tiny/Small (from scratch)
-2. DeiT (data-efficient)
-3. CNN-ViT Hybrid
-4. Swin Transformer
-5. Medical Transformer
+### Dataset Characteristics
+- **Total Images**: 450 (225 per class)
+- **Quality Distribution**:
+  - 71% high-quality images
+  - 5.8% extreme dark
+  - 9.1% low contrast  
+  - 14.2% potential artifacts
+  - 1.6% statistical outliers
 
-**Key Challenges**:
-- Limited data (450 images)
-- Need for strong augmentation
-- Self-supervised pre-training required
-- Attention visualization implementation
+### Impact on Phase 3
+- Quality-aware preprocessing proven effective
+- ViT-specific adaptations planned
+- Patch-level quality scoring to be implemented
 
-**Success Criteria**:
-- At least one ViT >91.18% (beat best CNN)
-- Attention maps providing medical insights
-- Efficient training (<10 hours total)
+## Next Immediate Actions (Phase 3 Start)
 
-## Action Items for Phase 3 Start
+### Today (June 12)
+- [x] Create Phase 3 implementation plan
+- [x] Update project log
+- [ ] Review plan with team
+- [ ] Set up ViT development branch
 
-### Immediate (This Week)
-1. [ ] Run ensemble test with real checkpoints
-2. [ ] Create ViT base architecture
-3. [ ] Implement patch embedding module
-4. [ ] Set up ViT experiment tracking
+### Tomorrow (June 13 - Week 1 Start)  
+- [ ] Begin ViT base architecture implementation
+- [ ] Set up attention visualization hooks
+- [ ] Create ViT-specific data pipeline
+- [ ] Start experiment tracking setup
 
-### Week 1 (June 13-19)
-1. [ ] Complete ViT-Tiny implementation
-2. [ ] Create attention visualization tools
-3. [ ] Adapt data pipeline for patches
-4. [ ] Initial experiments (target >85%)
+### This Week Goals
+- [ ] Complete ViT infrastructure (by June 15)
+- [ ] First ViT baseline running (by June 16)
+- [ ] Data pipeline fully adapted (by June 17)
+- [ ] Initial DeiT-Tiny experiments (by June 19)
 
-## Computational Resources Used
+## Computational Resources Planning
 
-### Phase 2 Summary
-- **Total GPU hours**: ~25 hours
-- **Models trained**: 14
-- **Average time/model**: 7.2 minutes
-- **Storage used**: ~15GB (checkpoints)
+### Phase 3 Allocation
+- **Estimated GPU hours**: 200 hours total
+  - DeiT experiments: 50 hours
+  - Swin optimization: 100 hours  
+  - Hyperparameter search: 50 hours
+- **Storage needs**: ~100GB for checkpoints and attention maps
+- **Priority**: Linux workstation (RTX 4000 Ada)
 
-### Phase 3 Projections
-- **Estimated GPU hours**: 200 hours
-- **Models to train**: 5-7
-- **Expected time/model**: 2-4 hours
-- **Storage needed**: ~100GB
+### Lessons from Phase 2
+- Unified runner eliminated subprocess issues
+- Rich logging improved debugging
+- Quality-aware preprocessing universal benefit
+- Early stopping prevented overfitting
 
-## Lessons Learned
+## Risk Management
 
-### What Worked Well
-1. **Unified experiment runner** - Eliminated subprocess complexity
-2. **Quality-aware preprocessing** - Universal improvements
-3. **Rich console output** - Better development experience
-4. **Modular architecture** - Easy to add new models
+### Phase 3 Specific Risks
+1. **ViT Data Hunger**: Mitigated by pre-trained weights + strong augmentation
+2. **Attention Collapse**: Monitor with visualization, proper init
+3. **Training Instability**: Layer-wise LR decay + gradient clipping
+4. **Reproduction of 94.4%**: Multiple configurations planned
 
-### Areas for Improvement
-1. **Cross-validation** - Not implemented (single split only)
-2. **Hyperparameter tuning** - Limited exploration
-3. **Multi-modal fusion** - Deferred to Phase 4
-4. **Patient-level splitting** - Not used due to data structure
+## Project Impact Update
 
-## Project Impact
+### Scientific Contributions (Cumulative)
+1. **Comprehensive CNN benchmark** on CARS thyroid (Phase 2) ✅
+2. **Quality-aware preprocessing** methodology (Phase 1-2) ✅
+3. **Efficient ensemble strategy** for medical imaging (Phase 2) ✅
+4. **ViT adaptation for microscopy** (Phase 3) 🔄
+5. **Attention-based interpretability** (Phase 3) 🔄
 
-### Scientific Contributions
-1. **Comprehensive CNN benchmark** on CARS thyroid imaging
-2. **Quality-aware preprocessing** methodology
-3. **Efficient ensemble strategy** for medical imaging
-4. **Foundation for ViT comparison** study
-
-### Clinical Relevance
-- **92.5% accuracy** suitable for screening applications
-- **EfficientNet-B0** viable for edge deployment (4M params)
-- **Attention visualization** (Phase 3) for interpretability
-- **Multi-modal fusion** (Phase 4) for comprehensive diagnosis
+### Clinical Relevance Progress
+- **Current best**: 92.5% accuracy (ensemble)
+- **Target**: 94.4% with interpretability
+- **Impact**: Suitable for screening with explanation
 
 ---
 
-**Status**: Ready for Phase 3 - Vision Transformer Implementation
-**Next Update**: After ViT-Tiny baseline (expected June 15, 2025)
+**Status**: Phase 3 Active - Vision Transformer Implementation  
+**Next Major Milestone**: DeiT variants complete (June 26, 2025)  
+**Critical Path**: Swin Transformer optimization for 94.4% target

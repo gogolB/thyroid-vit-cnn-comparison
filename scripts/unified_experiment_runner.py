@@ -37,6 +37,8 @@ from src.data.dataset import create_data_loaders
 from src.data.quality_preprocessing import create_quality_aware_transform
 from src.utils.device import get_device, device_info
 from src.training.train_cnn import ThyroidCNNModule
+from src.utils.checkpoint_utils import BestCheckpointCallback
+
 
 console = Console()
 
@@ -342,8 +344,8 @@ class UnifiedExperimentRunner:
         # Model checkpoint
         checkpoint_callback = ModelCheckpoint(
             dirpath=cfg.paths.checkpoint_dir,
-            filename=f"{cfg.model.name}-{{epoch:02d}}-{{val/acc:.4f}}",
-            monitor='val/acc',
+            filename=f"{cfg.model.name}-{{epoch:02d}}-{{val_acc:.4f}}",  # Changed val/acc to val_acc
+            monitor='val/acc',  # Keep original metric name for monitoring
             mode='max',
             save_top_k=3,
             save_last=True,
@@ -369,6 +371,9 @@ class UnifiedExperimentRunner:
         # Learning rate monitor
         lr_monitor = LearningRateMonitor(logging_interval='epoch')
         callbacks.append(lr_monitor)
+        
+        best_checkpoint_callback = BestCheckpointCallback(checkpoint_dir=Path(cfg.paths.checkpoint_dir))
+        callbacks.append(best_checkpoint_callback)
         
         # Setup logger
         logger = None

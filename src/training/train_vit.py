@@ -32,7 +32,13 @@ class ThyroidViTModule(pl.LightningModule):
         self.model = self._create_model()
         
         # Loss function with label smoothing if specified
-        label_smoothing = config.get('loss', {}).get('label_smoothing', 0.0)
+        # Resolve the loss config to avoid DictConfig issues
+        from omegaconf import OmegaConf
+        if 'loss' in config:
+            loss_config = OmegaConf.to_container(config.loss, resolve=True)
+            label_smoothing = float(loss_config.get('label_smoothing', 0.0))
+        else:
+            label_smoothing = 0.0
         self.criterion = nn.CrossEntropyLoss(label_smoothing=label_smoothing)
         
         # Metrics (using underscores for compatibility)
@@ -43,22 +49,57 @@ class ThyroidViTModule(pl.LightningModule):
         self.test_acc = Accuracy(task='binary')
         
         # For attention visualization
-        self.log_attention_maps = config.get('log_attention_maps', False)
+        self.log_attention_maps = bool(config.get('log_attention_maps', False))
+        
+        # Create model
+        self.model = self._create_model()
+        
+        # Loss function with label smoothing if specified
+        # Resolve the loss config to avoid DictConfig issues
+        from omegaconf import OmegaConf
+        # Handle loss config properly
+        if 'loss' in config and config.loss is not None:
+            if OmegaConf.is_config(config.loss):
+                loss_config = OmegaConf.to_container(config.loss, resolve=True)
+            else:
+                loss_config = config.loss if isinstance(config.loss, dict) else {}
+            label_smoothing = float(loss_config.get('label_smoothing', 0.0))
+        else:
+            label_smoothing = 0.0
+        self.criterion = nn.CrossEntropyLoss(label_smoothing=label_smoothing)
+        
+        # Metrics (using underscores for compatibility)
+        self.train_acc = Accuracy(task='binary')
+        self.val_acc = Accuracy(task='binary')
+        self.val_auc = AUROC(task='binary')
+        self.val_f1 = F1Score(task='binary')
+        self.test_acc = Accuracy(task='binary')
+    
+        # For attention visualization
+        log_attention = OmegaConf.to_container(config, resolve=True).get('log_attention_maps', False)
+        self.log_attention_maps = bool(log_attention)
         
     def _create_model(self) -> nn.Module:
         """Create the Vision Transformer model."""
-        # Get model configuration
-        model_config = self.config.model
+        from omegaconf import OmegaConf
         
-        # Create model using factory function - convert DictConfig values to primitives
+        # Convert configs to regular dicts to resolve DictConfig objects
+        config_dict = OmegaConf.to_container(self.config, resolve=True)
+        model_config = config_dict['model']
+        dataset_config = config_dict['dataset']
+        
+        # Get model parameters - they're nested under 'params' in the config
+        model_params = model_config.get('params', {})
+        
+        # Create model using factory function with resolved values
         model = get_vit_model(
-            model_name=model_config.name,
-            img_size=int(self.config.dataset.image_size),
+            model_name=model_config['name'],
+            img_size=int(dataset_config.get('image_size', 256)),
             in_chans=1,  # Grayscale
-            num_classes=int(self.config.dataset.num_classes),
-            drop_rate=float(model_config.get('drop_rate', 0.0)),
-            attn_drop_rate=float(model_config.get('attn_drop_rate', 0.0)),
-            drop_path_rate=float(model_config.get('drop_path_rate', 0.1)),
+            num_classes=int(dataset_config.get('num_classes', 2)),
+            drop_rate=float(model_params.get('drop_rate', 0.0)),
+            attn_drop_rate=float(model_params.get('attn_drop_rate', 0.0)),
+            drop_path_rate=float(model_params.get('drop_path_rate', 0.1)),
         )
         
         return model
@@ -134,48 +175,48 @@ class ThyroidViTModule(pl.LightningModule):
     
     def configure_optimizers(self):
         """Configure optimizers and schedulers."""
-        # Get optimizer config
-        opt_config = self.config.training.optimizer
+        from omegaconf import OmegaConf
+        
+        # Convert the entire training config to a regular Python dict
+        training_config = OmegaConf.to_container(self.config.training, resolve=True)
+        opt_config = training_config['optimizer']
         
         # Create parameter groups for layer-wise learning rate decay if specified
-        if self.config.training.get('layer_wise_lr_decay', False):
+        if training_config.get('layer_wise_lr_decay', False):
             param_groups = self._get_parameter_groups_with_decay()
         else:
             param_groups = self.model.parameters()
         
-        # Create optimizer - ensure all values are primitive types
-        print(opt_config)
-        if opt_config._target_ == 'torch.optim.AdamW':
+        # Create optimizer - all values are now primitive types
+        if opt_config['_target_'] == 'torch.optim.AdamW':
             optimizer = torch.optim.AdamW(
                 param_groups,
-                lr=float(opt_config.lr),
+                lr=float(opt_config['lr']),
                 weight_decay=float(opt_config.get('weight_decay', 0.05)),
-                betas=tuple(opt_config.get('betas', (0.9, 0.999)))
+                betas=tuple(opt_config.get('betas', [0.9, 0.999]))
             )
         else:
             # Fallback to Adam
             optimizer = torch.optim.Adam(
                 param_groups,
-                lr=float(opt_config.lr),
+                lr=float(opt_config['lr']),
                 weight_decay=float(opt_config.get('weight_decay', 0.0))
             )
         
         # Create scheduler if specified
-        if 'scheduler' in self.config.training:
-            sched_config = self.config.training.scheduler
+        if 'scheduler' in training_config:
+            sched_config = training_config['scheduler']
             
-            if sched_config._target_ == 'torch.optim.lr_scheduler.CosineAnnealingLR':
+            if sched_config['_target_'] == 'torch.optim.lr_scheduler.CosineAnnealingLR':
                 scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
                     optimizer,
-                    T_max=int(sched_config.get('T_max', self.config.training.num_epochs)),
+                    T_max=int(sched_config.get('T_max', training_config['num_epochs'])),
                     eta_min=float(sched_config.get('eta_min', 1e-6))
                 )
-            elif 'transformers' in sched_config._target_:
-                # For transformers schedulers, we need to handle them differently
-                # This is a placeholder - actual implementation would import transformers
+            elif 'transformers' in sched_config.get('_target_', ''):
                 scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
                     optimizer,
-                    T_max=self.config.training.num_epochs,
+                    T_max=int(training_config['num_epochs']),
                     eta_min=1e-6
                 )
             else:
@@ -197,8 +238,13 @@ class ThyroidViTModule(pl.LightningModule):
     
     def _get_parameter_groups_with_decay(self):
         """Get parameter groups with layer-wise learning rate decay."""
+        from omegaconf import OmegaConf
+        
+        # Resolve training config
+        training_config = OmegaConf.to_container(self.config.training, resolve=True)
+        
         # This is a simplified version - full implementation would decay by layer depth
-        decay_rate = float(self.config.training.get('layer_decay', 0.75))
+        decay_rate = float(training_config.get('layer_decay', {}).get('decay_rate', 0.75))
         base_lr = float(self.config.training.optimizer.lr)
         
         # Group parameters by layer

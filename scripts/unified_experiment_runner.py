@@ -7,6 +7,7 @@ Supports ResNet, EfficientNet, DenseNet, and Inception models
 
 import os
 import sys
+import traceback
 import argparse
 from pathlib import Path
 import time
@@ -196,8 +197,7 @@ class UnifiedExperimentRunner:
             
             # Convert back to OmegaConf and resolve any remaining interpolations
             cfg = OmegaConf.create(cfg_dict)
-            cfg = OmegaConf.to_container(cfg, resolve=True)
-            cfg = OmegaConf.create(cfg)
+            
             
             # Ensure directories exist
             Path(cfg.paths.data_dir).mkdir(parents=True, exist_ok=True)
@@ -208,6 +208,8 @@ class UnifiedExperimentRunner:
             
         except Exception as e:
             console.print(f"[red]Error creating config: {e}[/red]")
+            console.print("\n[red]Stack trace:[/red]")
+            console.print(traceback.format_exc())
             raise
         finally:
             # Always clean up Hydra
@@ -260,6 +262,11 @@ class UnifiedExperimentRunner:
                     overrides=experiment_overrides
                 )
             except Exception as e:
+                console.print(f"[red]Configuration error details:[/red]")
+                console.print("\n[red]Stack trace:[/red]")
+                console.print(traceback.format_exc())
+                console.print(f"[red]Configuration error details:[/red]")
+                console.print(traceback.format_exc())
                 raise ValueError(f"Configuration creation failed: {e}")
             
             # Run the experiment
@@ -289,6 +296,8 @@ class UnifiedExperimentRunner:
                 'model_type': model_type
             }
             console.print(f"\n[red]✗ {model_name} failed: {e}[/red]")
+            console.print("[red]Stack trace:[/red]")
+            console.print(traceback.format_exc())
         
         finally:
             # Ensure Hydra is always cleaned up

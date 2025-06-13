@@ -7,7 +7,7 @@ Compatible with existing CNN infrastructure
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Optional, Tuple, Dict, List, Union
+from typing import Any, Optional, Tuple, Dict, List, Union
 import pytorch_lightning as pl
 from torchmetrics import Accuracy, AUROC, F1Score
 from einops import rearrange, repeat
@@ -15,6 +15,35 @@ from einops.layers.torch import Rearrange
 import math
 import numpy as np
 from collections import OrderedDict
+
+
+def get_layer_from_string(layer_name):
+    """Convert string layer names to actual classes"""
+    if layer_name is None:
+        return None
+    
+    # If it's already a class, return it
+    if not isinstance(layer_name, str):
+        return layer_name
+    
+    # Map string names to actual classes
+    layer_map = {
+        'LayerNorm': nn.LayerNorm,
+        'nn.LayerNorm': nn.LayerNorm,
+        'GELU': nn.GELU,
+        'nn.GELU': nn.GELU,
+        'ReLU': nn.ReLU,
+        'nn.ReLU': nn.ReLU,
+        'SiLU': nn.SiLU,
+        'nn.SiLU': nn.SiLU,
+        'Identity': nn.Identity,
+        'nn.Identity': nn.Identity,
+    }
+    
+    if layer_name in layer_map:
+        return layer_map[layer_name]
+    else:
+        raise ValueError(f"Unknown layer name: {layer_name}")
 
 
 class DropPath(nn.Module):
@@ -212,7 +241,26 @@ class Block(nn.Module):
         store_attention: bool = True
     ):
         super().__init__()
-        self.norm1 = norm_layer(dim)
+        
+        # Convert string layer names to classes if needed
+        if isinstance(norm_layer, str):
+            layer_map = {
+                'LayerNorm': nn.LayerNorm,
+                'nn.LayerNorm': nn.LayerNorm,
+            }
+            norm_layer = layer_map.get(norm_layer, nn.LayerNorm)
+        
+        if isinstance(act_layer, str):
+            act_map = {
+                'GELU': nn.GELU,
+                'nn.GELU': nn.GELU,
+                'ReLU': nn.ReLU,
+                'nn.ReLU': nn.ReLU,
+            }
+            act_layer = act_map.get(act_layer, nn.GELU)
+        
+        
+        self.norm1 = norm_layer(dim) if not isinstance(norm_layer, str) else nn.LayerNorm(dim)
         self.attn = Attention(
             dim,
             num_heads=num_heads,
@@ -222,7 +270,7 @@ class Block(nn.Module):
             store_attention=store_attention
         )
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
-        self.norm2 = norm_layer(dim)
+        self.norm2 = norm_layer(dim) if not isinstance(norm_layer, str) else nn.LayerNorm(dim)
         mlp_hidden_dim = int(dim * mlp_ratio)
         self.mlp = Mlp(
             in_features=dim,
@@ -254,21 +302,39 @@ class VisionTransformerBase(pl.LightningModule):
         mlp_ratio: float = 4.,
         qkv_bias: bool = True,
         representation_size: Optional[int] = None,
+        distilled: bool = False,
         drop_rate: float = 0.,
         attn_drop_rate: float = 0.,
         drop_path_rate: float = 0.,
-        embed_layer: nn.Module = PatchEmbed,
-        norm_layer: nn.Module = nn.LayerNorm,
-        act_layer: nn.Module = nn.GELU,
+        embed_layer = None,
+        norm_layer = None,
+        act_layer = None,
+        weight_init: str = '',
         class_token: bool = True,
-        pos_embed_type: str = 'learnable',  # 'learnable' or 'sinusoidal'
-        pool_type: str = 'cls',  # 'cls' or 'gap'
+        no_embed_class: bool = False,
+        pos_embed_type: str = 'learnable',
+        pool_type: str = 'cls',
         quality_aware: bool = True,
-        projection_type: str = 'conv',
         store_attention: bool = True,
         **kwargs
     ):
         super().__init__()
+        
+        # Convert string layer names to actual classes
+        norm_layer = get_layer_from_string(norm_layer) if norm_layer else nn.LayerNorm
+        act_layer = get_layer_from_string(act_layer) if act_layer else nn.GELU
+        
+        # Handle embed_layer
+        if embed_layer == 'PatchEmbed' or embed_layer is None:
+            embed_layer = PatchEmbed
+        
+        # Extract store_attention from kwargs if not provided
+        if 'store_attention' not in locals():
+            store_attention = kwargs.get('store_attention', True)
+        
+        # Convert string layer names to actual classes
+        norm_layer = get_layer_from_string(norm_layer) if norm_layer else nn.LayerNorm
+        act_layer = get_layer_from_string(act_layer) if act_layer else nn.GELU
         self.save_hyperparameters()
         
         # Basic parameters
@@ -285,7 +351,7 @@ class VisionTransformerBase(pl.LightningModule):
             patch_size=patch_size,
             in_chans=in_chans,
             embed_dim=embed_dim,
-            projection_type=projection_type,
+            projection_type=kwargs.get('projection_type', 'conv'),
             quality_aware=quality_aware
         )
         

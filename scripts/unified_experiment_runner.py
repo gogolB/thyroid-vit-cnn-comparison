@@ -43,6 +43,7 @@ from src.models.vit import get_vit_model
 from src.training.train_vit import ThyroidViTModule
 
 
+
 console = Console()
 
 
@@ -194,6 +195,16 @@ class UnifiedExperimentRunner:
                     current_lr = cfg_dict['training']['optimizer'].get('lr', 0.001)
                     if current_lr > 0.001:  # If using CNN LR, reduce it
                         cfg_dict['training']['optimizer']['lr'] = 0.0005
+            
+            if model_type == 'vit' and 'deit' in model_name:
+                # Special handling for DeiT models
+                if cfg_dict['model'].get('pretrained', False):
+                    # Use lower learning rate for pretrained models
+                    cfg_dict['training']['optimizer']['lr'] = 0.0005
+                    
+                # Enable distillation if specified
+                if cfg_dict['model'].get('distilled', False):
+                    cfg_dict['training']['use_distillation'] = True
             
             # Convert back to OmegaConf and resolve any remaining interpolations
             cfg = OmegaConf.create(cfg_dict)
@@ -391,7 +402,11 @@ class UnifiedExperimentRunner:
         # Create model based on type
         console.print("\n[cyan]Creating model...[/cyan]")
         
-        if model_type == 'vit':
+        # Determine model type
+        model_name = cfg.model.name
+        if model_name in ['vit_tiny', 'vit_small', 'vit_base',
+                        'deit_tiny', 'deit_small', 'deit_base',
+                        'swin_tiny', 'swin_small', 'swin_base']:
             model = ThyroidViTModule(cfg)
         else:
             model = ThyroidCNNModule(cfg)

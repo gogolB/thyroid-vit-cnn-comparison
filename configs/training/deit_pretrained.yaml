@@ -1,47 +1,113 @@
-# DeiT with ImageNet pretrained weights
-name: deit_pretrained
+# configs/training/deit_pretrained.yaml
+# Training configuration optimized for DeiT with ImageNet pretrained weights
+
+# Basic training parameters
 batch_size: 32
 num_epochs: 150  # Fewer epochs needed with pretrained
+accumulate_grad_batches: 1
+
+# Optimizer configuration (AdamW with lower LR for fine-tuning)
 optimizer:
   _target_: torch.optim.AdamW
   lr: 0.0005  # Lower LR for pretrained
   weight_decay: 0.05
   betas: [0.9, 0.999]
+  eps: 1e-8
+
+# Learning rate scheduler
 scheduler:
   _target_: torch.optim.lr_scheduler.CosineAnnealingLR
   T_max: 150
   eta_min: 1e-6
-loss:
-  _target_: torch.nn.CrossEntropyLoss
-  label_smoothing: 0.1
-early_stopping:
-  patience: 20
-  min_delta: 0.001
-  mode: max
-  monitor: val_acc
-gradient_clip_val: 1.0
-accumulate_grad_batches: 1
-precision: "16-mixed"
 
-# Strong augmentation for DeiT
-augmentation:
-  randaugment:
-    n: 2
-    m: 9
-  mixup_alpha: 0.8
-  cutmix_alpha: 1.0
-  cutmix_prob: 0.5
-  use_quality_aware: false
-  pretrained: true
-  pretrained_type: imagenet
-  input_size_override: 224  # DeiT default
+# Warmup configuration (critical for pretrained models)
+warmup:
+  warmup_epochs: 10
+  warmup_method: linear
+  warmup_factor: 0.001
 
-# Layer-wise learning rate decay
-layer_wise_lr_decay:
+# Layer-wise learning rate decay (important for fine-tuning)
+layer_decay:
   enabled: true
   decay_rate: 0.75
   
-# Warmup settings
-warmup:
-  epochs: 10
-  start_lr: 1e-6
+# Loss function with label smoothing
+loss:
+  _target_: torch.nn.CrossEntropyLoss
+  label_smoothing: 0.1
+
+# Early stopping configuration
+early_stopping:
+  patience: 20  # Less patience for pretrained
+  min_delta: 0.001
+  mode: max
+  monitor: val_acc
+  verbose: true
+
+# Gradient clipping
+gradient_clip_val: 1.0
+gradient_clip_algorithm: norm
+
+# Mixed precision training
+precision: "16-mixed"
+
+# DeiT-specific augmentation (strong augmentation for small dataset)
+augmentation:
+  augmentation_level: strong
+  
+  # RandAugment settings
+  randaugment:
+    enabled: true
+    n: 2
+    m: 9
+    
+  # MixUp settings
+  mixup:
+    enabled: true
+    alpha: 0.8
+    prob: 0.5
+    switch_prob: 0.5
+    mode: batch
+    
+  # CutMix settings  
+  cutmix:
+    enabled: true
+    alpha: 1.0
+    prob: 0.5
+
+# Data loading
+dataloader:
+  num_workers: 4
+  pin_memory: true
+  prefetch_factor: 2
+  persistent_workers: true
+
+# Regularization (reduced for pretrained)
+regularization:
+  drop_path_rate: 0.05  # Lower stochastic depth for pretrained
+  dropout_rate: 0.0
+  attention_dropout: 0.0
+  
+# Monitoring and logging
+log_every_n_steps: 10
+val_check_interval: 1.0
+save_top_k: 3
+save_last: true
+
+# Deterministic training
+deterministic: false
+benchmark: false
+
+# Trainer settings
+trainer:
+  max_epochs: 150
+  accelerator: auto
+  devices: 1
+  precision: "16-mixed"
+  gradient_clip_val: 1.0
+  accumulate_grad_batches: 1
+  val_check_interval: 1.0
+  log_every_n_steps: 10
+  enable_checkpointing: true
+  enable_progress_bar: true
+  enable_model_summary: true

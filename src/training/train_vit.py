@@ -9,7 +9,7 @@ import torch.nn.functional as F
 import pytorch_lightning as pl
 from torchmetrics import Accuracy, AUROC, F1Score
 from typing import Optional, Dict, Any
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 import wandb
 
 from src.models.vit import get_vit_model
@@ -81,26 +81,31 @@ class ThyroidViTModule(pl.LightningModule):
         
     def _create_model(self) -> nn.Module:
         """Create the Vision Transformer model."""
-        from omegaconf import OmegaConf
+        model_config = self.config.model
+        model_name = model_config.name
         
-        # Convert configs to regular dicts to resolve DictConfig objects
-        config_dict = OmegaConf.to_container(self.config, resolve=True)
-        model_config = config_dict['model']
-        dataset_config = config_dict['dataset']
+        # Extract model parameters
+        model_params = OmegaConf.to_container(model_config.get('params', {}), resolve=True)
         
-        # Get model parameters - they're nested under 'params' in the config
-        model_params = model_config.get('params', {})
+        # Add pretrained flag if specified
+        if hasattr(model_config, 'pretrained'):
+            model_params['pretrained'] = model_config.pretrained
         
-        # Create model using factory function with resolved values
-        model = get_vit_model(
-            model_name=model_config['name'],
-            img_size=int(dataset_config.get('image_size', 256)),
-            in_chans=1,  # Grayscale
-            num_classes=int(dataset_config.get('num_classes', 2)),
-            drop_rate=float(model_params.get('drop_rate', 0.0)),
-            attn_drop_rate=float(model_params.get('attn_drop_rate', 0.0)),
-            drop_path_rate=float(model_params.get('drop_path_rate', 0.1)),
-        )
+        # Add pretrained config if specified
+        if hasattr(model_config, 'pretrained_cfg'):
+            model_params['pretrained_cfg'] = OmegaConf.to_container(
+                model_config.pretrained_cfg, resolve=True
+            )
+        
+        # Create model using the factory function
+        model = get_vit_model(model_name, **model_params)
+        
+        # Log model information
+        param_count = sum(p.numel() for p in model.parameters())
+        self.log_dict({
+            'model/parameters': float(param_count),
+            # 'model/name': model_name,  # Can't log strings
+        }, on_epoch=False, on_step=False, logger=True)
         
         return model
     
@@ -109,12 +114,30 @@ class ThyroidViTModule(pl.LightningModule):
         return self.model(x)
     
     def training_step(self, batch, batch_idx):
-        """Training step."""
+        """Training step with DeiT support"""
         images, labels = batch
         
         # Forward pass
-        logits = self(images)
-        loss = self.criterion(logits, labels)
+        outputs = self.model(images)
+        
+        # Handle DeiT distillation outputs
+        if isinstance(outputs, tuple) and len(outputs) == 2:
+            # DeiT returns (class_logits, distill_logits) during training
+            class_logits, distill_logits = outputs
+            
+            # Calculate losses
+            class_loss = self.criterion(class_logits, labels)
+            distill_loss = self.criterion(distill_logits, labels)
+            
+            # Combine losses (can be weighted differently)
+            loss = 0.5 * class_loss + 0.5 * distill_loss
+            
+            # Use class logits for metrics
+            logits = class_logits
+        else:
+            # Standard ViT output
+            logits = outputs
+            loss = self.criterion(logits, labels)
         
         # Calculate accuracy
         preds = torch.argmax(logits, dim=1)

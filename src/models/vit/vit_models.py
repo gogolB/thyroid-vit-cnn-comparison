@@ -72,6 +72,12 @@ class VisionTransformer(VisionTransformerBase):
         # Stochastic depth decay rule
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, depth)]
         
+        # Convert string layers to classes before creating blocks
+        if isinstance(norm_layer, str):
+            norm_layer = get_layer_from_string(norm_layer) if 'get_layer_from_string' in globals() else nn.LayerNorm
+        if isinstance(act_layer, str):
+            act_layer = get_layer_from_string(act_layer) if 'get_layer_from_string' in globals() else nn.GELU
+        
         # Create transformer blocks
         self.blocks = nn.Sequential(*[
             Block(

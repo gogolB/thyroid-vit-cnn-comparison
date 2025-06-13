@@ -10,6 +10,7 @@ from typing import Optional, Dict, Any, Tuple
 import timm
 from timm.models.vision_transformer import VisionTransformer as TimmVisionTransformer
 import warnings
+import math
 
 from .vision_transformer_base import VisionTransformerBase
 from .vit_models import VisionTransformer
@@ -141,75 +142,65 @@ class DeiT(VisionTransformer):
         """Adapt pretrained weights to match our model architecture"""
         adapted_state = {}
         
-        # Get model configuration
-        pretrained_img_size = self.pretrained_cfg.get('input_size', [3, 224, 224])[-1]
-        pretrained_num_classes = self.pretrained_cfg.get('num_classes', 1000)
-        
         for key, value in state_dict.items():
-            # Handle patch embedding for grayscale images
-            if key == 'patch_embed.proj.weight' and value.shape[1] == 3 and self.in_chans == 1:
-                # Average RGB channels to grayscale
-                value = value.mean(dim=1, keepdim=True)
-            
-            # Handle position embeddings with different sizes
-            elif key == 'pos_embed' and value.shape != self.pos_embed.shape:
-                value = self._interpolate_pos_embed(value, self.pos_embed.shape)
-            
-            # Skip classification head if number of classes differs
-            elif key in ['head.weight', 'head.bias', 'head_dist.weight', 'head_dist.bias']:
-                if 'head.weight' in key and value.shape[0] != self.num_classes:
-                    continue  # Skip loading head weights
-                elif 'head_dist' in key and not self.distilled:
-                    continue  # Skip distillation head if not using distillation
-            
-            # Handle distillation token
-            elif key == 'dist_token' and not self.distilled:
-                continue  # Skip if not using distillation
+            # Skip head weights if num_classes differs
+            if 'head' in key and value.shape[0] != self.num_classes:
+                continue
                 
+            # Handle position embeddings if size differs
+            if 'pos_embed' in key:
+                if value.shape != self.pos_embed.shape:
+                    # Interpolate position embeddings
+                    value = self._interpolate_pos_embed(value)
+                    
+            # Handle patch embedding for different channel counts
+            if 'patch_embed.proj.weight' in key and self.in_chans != 3:
+                # Average RGB weights for grayscale
+                if value.shape[1] == 3 and self.in_chans == 1:
+                    value = value.mean(dim=1, keepdim=True)
+            
             adapted_state[key] = value
         
         return adapted_state
-    
-    def _interpolate_pos_embed(self, pos_embed: torch.Tensor, target_shape: Tuple[int, ...]) -> torch.Tensor:
-        """Interpolate position embeddings to handle different image sizes"""
-        # pos_embed shape: (1, num_patches + num_tokens, embed_dim)
-        num_tokens = 2 if self.distilled else 1
+
+    def _interpolate_pos_embed(self, pos_embed: torch.Tensor) -> torch.Tensor:
+        """Interpolate position embeddings to match current resolution"""
+        npatch = self.patch_embed.num_patches
+        N = pos_embed.shape[1] - self.num_tokens
         
-        # Separate class (and dist) tokens from position embeddings
-        extra_tokens = pos_embed[:, :num_tokens]
-        pos_tokens = pos_embed[:, num_tokens:]
-        
-        # Calculate grid sizes
-        src_size = int(pos_tokens.shape[1] ** 0.5)
-        dst_size = int((target_shape[1] - num_tokens) ** 0.5)
-        
-        if src_size != dst_size:
-            # Reshape to 2D grid
-            pos_tokens = pos_tokens.reshape(1, src_size, src_size, -1).permute(0, 3, 1, 2)
+        if npatch == N:
+            return pos_embed
             
-            # Interpolate
-            pos_tokens = F.interpolate(
-                pos_tokens,
-                size=(dst_size, dst_size),
-                mode='bicubic',
-                align_corners=False
-            )
-            
-            # Reshape back
-            pos_tokens = pos_tokens.permute(0, 2, 3, 1).flatten(1, 2)
+        # Separate class/dist tokens and position embeddings
+        class_pos_embed = pos_embed[:, :self.num_tokens]
+        patch_pos_embed = pos_embed[:, self.num_tokens:]
         
-        # Concatenate back with class token
-        return torch.cat([extra_tokens, pos_tokens], dim=1)
+        # Calculate original grid size
+        gs_old = int(math.sqrt(N))
+        gs_new = int(math.sqrt(npatch))
+        
+        # Interpolate patch embeddings
+        patch_pos_embed = patch_pos_embed.reshape(1, gs_old, gs_old, -1).permute(0, 3, 1, 2)
+        patch_pos_embed = F.interpolate(patch_pos_embed, size=(gs_new, gs_new), mode='bicubic', align_corners=False)
+        patch_pos_embed = patch_pos_embed.permute(0, 2, 3, 1).reshape(1, -1, self.embed_dim)
+        
+        # Combine back
+        return torch.cat((class_pos_embed, patch_pos_embed), dim=1)
     
     def forward_features(self, x: torch.Tensor) -> torch.Tensor:
-        """Forward pass through transformer layers"""
-        # Patch embedding
-        x = self.patch_embed(x)
+        """Forward features with distillation token support"""
+        # Patch embedding - handle tuple return
+        patch_output = self.patch_embed(x)
+        if isinstance(patch_output, tuple):
+            x, _ = patch_output  # Ignore quality scores for now
+        else:
+            x = patch_output
         
         # Add class token
         cls_token = self.cls_token.expand(x.shape[0], -1, -1)
+        
         if self.distilled:
-            # Add both class and distillation tokens
+            # Add distillation token
             dist_token = self.dist_token.expand(x.shape[0], -1, -1)
             x = torch.cat((cls_token, dist_token, x), dim=1)
         else:
@@ -220,9 +211,10 @@ class DeiT(VisionTransformer):
         x = self.pos_drop(x)
         
         # Apply transformer blocks
-        x = self.blocks(x)
-        x = self.norm(x)
+        for block in self.blocks:
+            x = block(x)
         
+        x = self.norm(x)
         return x
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -249,37 +241,58 @@ class DeiT(VisionTransformer):
 class DeiTTiny(DeiT):
     """DeiT-Tiny model (~5.7M params)"""
     def __init__(self, **kwargs):
-        super().__init__(
-            embed_dim=192,
-            depth=12,
-            num_heads=3,
-            mlp_ratio=4,
-            **kwargs
-        )
+        # Set defaults only if not provided in kwargs
+        defaults = {
+            'embed_dim': 192,
+            'depth': 12,
+            'num_heads': 3,
+            'mlp_ratio': 4,
+        }
+        
+        # Update defaults with any provided kwargs
+        for key, value in defaults.items():
+            if key not in kwargs:
+                kwargs[key] = value
+                
+        super().__init__(**kwargs)
 
 
 class DeiTSmall(DeiT):
     """DeiT-Small model (~22M params)"""
     def __init__(self, **kwargs):
-        super().__init__(
-            embed_dim=384,
-            depth=12,
-            num_heads=6,
-            mlp_ratio=4,
-            **kwargs
-        )
+        # Set defaults only if not provided in kwargs
+        defaults = {
+            'embed_dim': 384,
+            'depth': 12,
+            'num_heads': 6,
+            'mlp_ratio': 4,
+        }
+        
+        # Update defaults with any provided kwargs
+        for key, value in defaults.items():
+            if key not in kwargs:
+                kwargs[key] = value
+                
+        super().__init__(**kwargs)
 
 
 class DeiTBase(DeiT):
     """DeiT-Base model (~86M params)"""
     def __init__(self, **kwargs):
-        super().__init__(
-            embed_dim=768,
-            depth=12,
-            num_heads=12,
-            mlp_ratio=4,
-            **kwargs
-        )
+        # Set defaults only if not provided in kwargs
+        defaults = {
+            'embed_dim': 768,
+            'depth': 12,
+            'num_heads': 12,
+            'mlp_ratio': 4,
+        }
+        
+        # Update defaults with any provided kwargs
+        for key, value in defaults.items():
+            if key not in kwargs:
+                kwargs[key] = value
+                
+        super().__init__(**kwargs)
 
 
 def create_deit_tiny(
@@ -293,9 +306,10 @@ def create_deit_tiny(
 ) -> DeiTTiny:
     """Create DeiT-Tiny model with optional pretrained weights"""
     
-    pretrained_cfg = None
-    if pretrained:
-        pretrained_cfg = {
+    # Check if pretrained_cfg is already in kwargs
+    if 'pretrained_cfg' not in kwargs and pretrained:
+        # Only create default if not provided
+        kwargs['pretrained_cfg'] = {
             'model_name': 'deit_tiny_patch16_224',
             'num_classes': 1000,
             'input_size': [3, 224, 224],
@@ -308,7 +322,6 @@ def create_deit_tiny(
         num_classes=num_classes,
         distilled=distilled,
         pretrained=pretrained,
-        pretrained_cfg=pretrained_cfg,
         **kwargs
     )
 
@@ -324,9 +337,10 @@ def create_deit_small(
 ) -> DeiTSmall:
     """Create DeiT-Small model with optional pretrained weights"""
     
-    pretrained_cfg = None
-    if pretrained:
-        pretrained_cfg = {
+    # Check if pretrained_cfg is already in kwargs
+    if 'pretrained_cfg' not in kwargs and pretrained:
+        # Only create default if not provided
+        kwargs['pretrained_cfg'] = {
             'model_name': 'deit_small_patch16_224',
             'num_classes': 1000,
             'input_size': [3, 224, 224],
@@ -339,7 +353,6 @@ def create_deit_small(
         num_classes=num_classes,
         distilled=distilled,
         pretrained=pretrained,
-        pretrained_cfg=pretrained_cfg,
         **kwargs
     )
 
@@ -355,9 +368,10 @@ def create_deit_base(
 ) -> DeiTBase:
     """Create DeiT-Base model with optional pretrained weights"""
     
-    pretrained_cfg = None
-    if pretrained:
-        pretrained_cfg = {
+    # Check if pretrained_cfg is already in kwargs
+    if 'pretrained_cfg' not in kwargs and pretrained:
+        # Only create default if not provided
+        kwargs['pretrained_cfg'] = {
             'model_name': 'deit_base_patch16_224',
             'num_classes': 1000,
             'input_size': [3, 224, 224],
@@ -370,7 +384,6 @@ def create_deit_base(
         num_classes=num_classes,
         distilled=distilled,
         pretrained=pretrained,
-        pretrained_cfg=pretrained_cfg,
         **kwargs
     )
 
@@ -387,7 +400,17 @@ def create_deit_model(model_name: str, **kwargs) -> DeiT:
     if model_name not in model_map:
         raise ValueError(f"Unknown DeiT model: {model_name}. Available: {list(model_map.keys())}")
     
-    return model_map[model_name](**kwargs)
+    # Extract pretrained_cfg to avoid duplicate argument error
+    pretrained_cfg = kwargs.pop('pretrained_cfg', None)
+    pretrained = kwargs.get('pretrained', False)
+    
+    # Only pass pretrained_cfg if we have one from config
+    if pretrained_cfg is not None:
+        # The factory functions will use this instead of creating their own
+        return model_map[model_name](pretrained_cfg=pretrained_cfg, **kwargs)
+    else:
+        # Let the factory functions create their default pretrained_cfg
+        return model_map[model_name](**kwargs)
 
 
 # Knowledge Distillation Loss

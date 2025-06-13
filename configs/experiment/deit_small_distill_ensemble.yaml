@@ -1,0 +1,70 @@
+# configs/experiment/deit_small_distill_ensemble.yaml
+# Experiment: DeiT-Small with ensemble teacher (multiple CNNs)
+
+defaults:
+  - override /model: vit/deit_small
+  - override /training: distillation
+
+# Experiment name
+name: deit_small_distill_ensemble
+
+# Model configuration
+model:
+  params:
+    distilled: true
+    drop_path_rate: 0.1  # Standard drop path
+    pretrained: true
+
+# Ensemble distillation configuration
+distillation:
+  # Use ensemble of top 3 CNN models
+  ensemble_teachers: true
+  teacher_checkpoints:
+    - ${paths.checkpoint_dir}/resnet50-best.ckpt
+    - ${paths.checkpoint_dir}/efficientnet_b0-best.ckpt
+    - ${paths.checkpoint_dir}/efficientnet_b2-best.ckpt
+  
+  teacher_model_types:
+    - cnn
+    - cnn
+    - cnn
+    
+  teacher_model_names:
+    - resnet50
+    - efficientnet_b0
+    - efficientnet_b2
+  
+  # Ensemble weighting (based on individual accuracies)
+  teacher_weights:
+    - 0.4  # ResNet50 (highest accuracy)
+    - 0.3  # EfficientNet-B0
+    - 0.3  # EfficientNet-B2
+  
+  # Distillation parameters
+  alpha: 0.8  # Very high weight on ensemble knowledge
+  temperature: 4.0  # Higher temperature for ensemble
+  distillation_type: soft
+
+# Training configuration
+training:
+  batch_size: 24  # Reduced due to multiple teachers
+  learning_rate: 0.0003  # Lower LR for ensemble
+  warmup_epochs: 30  # Longer warmup
+  num_epochs: 400  # More epochs for complex distillation
+
+# Stronger augmentation for larger model
+augmentation:
+  randaugment:
+    n: 3
+    m: 9
+  mixup_alpha: 0.8
+  cutmix_alpha: 1.0
+  cutmix_prob: 0.5
+
+# Monitoring
+monitor_metrics:
+  - val_acc
+  - teacher_agreement_resnet50
+  - teacher_agreement_efficientnet_b0
+  - teacher_agreement_efficientnet_b2
+  - ensemble_agreement

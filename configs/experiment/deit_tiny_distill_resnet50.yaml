@@ -1,0 +1,55 @@
+# configs/experiment/deit_tiny_distill_resnet50.yaml
+# Experiment: DeiT-Tiny with ResNet50 teacher (best CNN model)
+
+defaults:
+  - override /model: vit/deit_tiny
+  - override /training: distillation
+  - override /dataset: thyroid_vit  # If you have ViT-specific dataset config
+
+# Experiment name
+name: deit_tiny_distill_resnet50
+
+# Model configuration
+model:
+  params:
+    distilled: true  # Enable distillation token
+    drop_path_rate: 0.05  # Lower drop path for distillation
+    pretrained: true  # Use ImageNet pretrained weights
+
+# Distillation configuration
+distillation:
+  teacher_checkpoint: checkpoints/best/resnet50-best.ckpt
+  teacher_model_type: cnn
+  teacher_model_name: resnet50  # Explicitly specify
+  
+  # Tuned parameters for ResNet50 teacher
+  alpha: 0.7  # Higher weight on distillation (strong teacher)
+  temperature: 3.0  # Lower temperature for confident teacher
+  distillation_type: soft
+  
+  # Progressive distillation schedule
+  progressive_distillation: true
+  progressive_schedule:
+    0: 0.9     # Start with 90% distillation
+    100: 0.7   # Reduce to 70% by epoch 100
+    200: 0.5   # Final 50% by epoch 200
+
+# Training modifications
+training:
+  batch_size: 32
+  learning_rate: 0.0005
+  warmup_epochs: 20
+  
+# Data augmentation
+augmentation:
+  randaugment:
+    n: 2
+    m: 7  # Slightly reduced for distillation
+  mixup_alpha: 0.2  # Reduced mixup
+  cutmix_alpha: 0.0  # Disable cutmix for cleaner distillation
+
+# Logging
+wandb:
+  project: thyroid-distillation
+  tags: ["deit-tiny", "resnet50-teacher", "distillation"]
+  notes: "DeiT-Tiny distilled from ResNet50 (91.18% accuracy)"

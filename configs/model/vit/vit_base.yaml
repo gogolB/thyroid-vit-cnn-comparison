@@ -1,0 +1,22 @@
+name: vit_base
+type: vision_transformer
+params:
+  img_size: 256
+  patch_size: 16
+  in_chans: 1
+  num_classes: 2
+  embed_dim: 768
+  depth: 12
+  num_heads: 12
+  mlp_ratio: 4.0
+  qkv_bias: true
+  drop_rate: 0.0
+  attn_drop_rate: 0.0
+  drop_path_rate: 0.1
+  class_token: true
+  pos_embed_type: learnable
+training:
+  learning_rate: 0.0003  # Even lower for base model
+  weight_decay: 0.05
+  warmup_epochs: 15      # Longer warmup for larger model
+  layer_decay: 0.65      # Stronger decay for base

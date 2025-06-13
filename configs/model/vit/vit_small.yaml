@@ -1,0 +1,22 @@
+name: vit_small
+type: vision_transformer
+params:
+  img_size: 256
+  patch_size: 16
+  in_chans: 1
+  num_classes: 2
+  embed_dim: 384
+  depth: 12
+  num_heads: 6
+  mlp_ratio: 4.0
+  qkv_bias: true
+  drop_rate: 0.0
+  attn_drop_rate: 0.0
+  drop_path_rate: 0.1
+  class_token: true
+  pos_embed_type: learnable
+training:
+  learning_rate: 0.0005  # Lower than tiny due to larger size
+  weight_decay: 0.05
+  warmup_epochs: 10
+  layer_decay: 0.75

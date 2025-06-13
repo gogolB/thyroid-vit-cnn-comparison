@@ -1,0 +1,60 @@
+# configs/model/vit/deit_small.yaml
+name: deit_small
+type: vision_transformer
+architecture: deit
+
+# Model parameters
+params:
+  img_size: 256
+  patch_size: 16
+  in_chans: 1  # Grayscale thyroid images
+  num_classes: 2  # Binary classification
+  embed_dim: 384  # Small model dimension
+  depth: 12
+  num_heads: 6  # 384 / 64 = 6
+  mlp_ratio: 4.0
+  qkv_bias: true
+  representation_size: null
+  distilled: true  # DeiT uses distillation
+  drop_rate: 0.0
+  attn_drop_rate: 0.0
+  drop_path_rate: 0.1  # Stochastic depth
+  embed_layer: PatchEmbed
+  norm_layer: LayerNorm
+  act_layer: GELU
+  weight_init: trunc_normal
+  class_token: true
+  distillation_token: true  # DeiT specific
+  pos_embed_type: learnable
+  pool_type: cls
+  
+# Pretrained settings
+pretrained: true
+pretrained_cfg:
+  model_name: "deit_small_patch16_224"
+  url: "https://dl.fbaipublicfiles.com/deit/deit_small_patch16_224-cd65a155.pth"
+  num_classes: 1000
+  input_size: [3, 224, 224]
+  interpolate_pos_embed: true
+  strict: false  # Allow loading with different num_classes
+  
+# Knowledge distillation settings
+distillation:
+  teacher_model: null  # Can specify a teacher model
+  alpha: 0.5  # Distillation loss weight
+  temperature: 3.0
+  
+# Attention visualization
+attention:
+  save_attention_maps: true
+  visualize_layers: [11]  # Last layer
+  
+# Model initialization
+init:
+  mode: trunc_normal
+  std: 0.02
+  
+# Quality-aware preprocessing
+quality_aware: true
+
+# Expected parameter count: ~22M

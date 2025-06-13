@@ -9,13 +9,12 @@ params:
   patch_size: 16
   in_chans: 1  # Grayscale thyroid images
   num_classes: 2  # Binary classification
-  embed_dim: 192
+  embed_dim: 192  # Tiny model dimension
   depth: 12
-  num_heads: 3
+  num_heads: 3  # 192 / 64 = 3
   mlp_ratio: 4.0
   qkv_bias: true
   representation_size: null
-  distilled: false
   drop_rate: 0.0
   attn_drop_rate: 0.0
   drop_path_rate: 0.1  # Stochastic depth
@@ -25,19 +24,22 @@ params:
   weight_init: trunc_normal
   class_token: true
   pos_embed_type: learnable
-  pool_type: cls  # 'cls' or 'gap'
+  pool_type: cls
   
-# Attention visualization settings
+# No pretrained weights for standard ViT
+pretrained: false
+  
+# Attention visualization
 attention:
   save_attention_maps: true
-  attention_probs_dropout_prob: 0.0
+  visualize_layers: [11]  # Last layer
   
 # Model initialization
 init:
   mode: trunc_normal
   std: 0.02
   
-# Quality-aware preprocessing (inherited from CNN success)
+# Quality-aware preprocessing
 quality_aware: true
 
 # Expected parameter count: ~5.7M

@@ -1,0 +1,47 @@
+# DeiT with ImageNet pretrained weights
+name: deit_pretrained
+batch_size: 32
+num_epochs: 150  # Fewer epochs needed with pretrained
+optimizer:
+  _target_: torch.optim.AdamW
+  lr: 0.0005  # Lower LR for pretrained
+  weight_decay: 0.05
+  betas: [0.9, 0.999]
+scheduler:
+  _target_: torch.optim.lr_scheduler.CosineAnnealingLR
+  T_max: 150
+  eta_min: 1e-6
+loss:
+  _target_: torch.nn.CrossEntropyLoss
+  label_smoothing: 0.1
+early_stopping:
+  patience: 20
+  min_delta: 0.001
+  mode: max
+  monitor: val_acc
+gradient_clip_val: 1.0
+accumulate_grad_batches: 1
+precision: "16-mixed"
+
+# Strong augmentation for DeiT
+augmentation:
+  randaugment:
+    n: 2
+    m: 9
+  mixup_alpha: 0.8
+  cutmix_alpha: 1.0
+  cutmix_prob: 0.5
+  use_quality_aware: false
+  pretrained: true
+  pretrained_type: imagenet
+  input_size_override: 224  # DeiT default
+
+# Layer-wise learning rate decay
+layer_wise_lr_decay:
+  enabled: true
+  decay_rate: 0.75
+  
+# Warmup settings
+warmup:
+  epochs: 10
+  start_lr: 1e-6

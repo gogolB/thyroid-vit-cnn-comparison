@@ -1,23 +1,37 @@
+
+# configs/model/vit/vit_small.yaml
 name: vit_small
 type: vision_transformer
 architecture: vit
+
+# Model parameters
 params:
   img_size: 256
   patch_size: 16
-  in_chans: 1
+  in_chans: 1  # Grayscale
   num_classes: 2
-  embed_dim: 384
+  embed_dim: 384  # Small dimension
   depth: 12
   num_heads: 6
   mlp_ratio: 4.0
   qkv_bias: true
-  drop_rate: 0.0
+  representation_size: null
+  drop_rate: 0.1
   attn_drop_rate: 0.0
   drop_path_rate: 0.1
   class_token: true
   pos_embed_type: learnable
-training:
-  learning_rate: 0.0005  # Lower than tiny due to larger size
-  weight_decay: 0.05
-  warmup_epochs: 10
-  layer_decay: 0.75
+  pool_type: cls
+  
+# No pretrained weights for standard ViT
+pretrained: false
+
+# Model initialization
+init:
+  mode: trunc_normal
+  std: 0.02
+  
+# Quality-aware preprocessing
+quality_aware: true
+
+# Expected parameter count: ~22M

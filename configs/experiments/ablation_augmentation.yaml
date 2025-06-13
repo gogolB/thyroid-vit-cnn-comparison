@@ -1,0 +1,38 @@
+# configs/experiments/ablation_augmentation.yaml
+# Ablation study for augmentation strategies
+experiments:
+  - name: no_augmentation
+    base_config: vit_baseline
+    overrides:
+      augmentation.randaugment.n: 0
+      augmentation.mixup_alpha: 0.0
+      augmentation.cutmix_alpha: 0.0
+      
+  - name: randaugment_only
+    base_config: vit_baseline
+    overrides:
+      augmentation.randaugment.n: 2
+      augmentation.randaugment.m: 9
+      augmentation.mixup_alpha: 0.0
+      augmentation.cutmix_alpha: 0.0
+      
+  - name: mixup_only
+    base_config: vit_baseline
+    overrides:
+      augmentation.randaugment.n: 0
+      augmentation.mixup_alpha: 0.8
+      augmentation.cutmix_alpha: 0.0
+      
+  - name: all_augmentation
+    base_config: vit_baseline
+    overrides:
+      augmentation.randaugment.n: 2
+      augmentation.randaugment.m: 9
+      augmentation.mixup_alpha: 0.8
+      augmentation.cutmix_alpha: 1.0
+      
+  - name: quality_aware_comparison
+    base_config: vit_medical_strong
+    overrides:
+      augmentation.use_quality_aware: true
+      augmentation.quality_threshold: 0.7

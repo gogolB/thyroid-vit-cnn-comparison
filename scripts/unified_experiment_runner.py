@@ -68,7 +68,7 @@ class UnifiedExperimentRunner:
         """Get available model configurations."""
         models = {
             'cnn': [],
-            'vit': []  # For future use
+            'vit': [] 
         }
         
         # Scan CNN models
@@ -77,6 +77,13 @@ class UnifiedExperimentRunner:
             for config_file in cnn_dir.glob('*.yaml'):
                 model_name = config_file.stem
                 models['cnn'].append(model_name)
+        
+        # Scan ViT models (Phase 3)
+        vit_dir = self.config_dir / 'model' / 'vit'
+        if vit_dir.exists():
+            for config_file in vit_dir.glob('*.yaml'):
+                model_name = config_file.stem
+                models['vit'].append(model_name)
         
         return models
     
@@ -150,6 +157,15 @@ class UnifiedExperimentRunner:
             
             # Apply replacements
             cfg_dict = replace_interpolations(cfg_dict)
+            
+            if model_type == 'vit':
+                # Special handling for ViT models
+                cfg_dict['model']['_target_'] = 'src.models.vit.get_vit_model'
+                cfg_dict['training']['optimizer']['_target_'] = 'torch.optim.AdamW'
+                
+                # Layer-wise learning rate decay
+                if 'layer_decay' in cfg_dict['training']:
+                    cfg_dict['training']['layer_wise_lr_decay'] = True
             
             # Convert back to OmegaConf and resolve any remaining interpolations
             cfg = OmegaConf.create(cfg_dict)

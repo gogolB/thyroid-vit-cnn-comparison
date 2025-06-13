@@ -1,0 +1,109 @@
+# configs/training/vit_standard.yaml
+# Training configuration optimized for Vision Transformers on small medical datasets
+
+# Basic training parameters
+batch_size: 32
+num_epochs: 300
+accumulate_grad_batches: 1  # Can increase for larger effective batch size
+
+# Optimizer configuration (AdamW is standard for ViTs)
+optimizer:
+  _target_: torch.optim.AdamW
+  lr: 0.001  # Will be scaled by layer-wise decay
+  weight_decay: 0.05  # Higher weight decay for ViTs
+  betas: [0.9, 0.999]
+  eps: 1e-8
+
+# Learning rate scheduler
+scheduler:
+  _target_: torch.optim.lr_scheduler.CosineAnnealingLR
+  T_max: 300
+  eta_min: 1e-6
+
+# Warmup configuration (critical for ViTs)
+warmup:
+  warmup_epochs: 20  # Longer warmup for transformers
+  warmup_method: linear
+  warmup_factor: 0.001
+
+# Layer-wise learning rate decay (LLRD)
+layer_decay:
+  enabled: true
+  decay_rate: 0.75  # Each layer gets decay_rate * prev_layer_lr
+  
+# Loss function with label smoothing
+loss:
+  _target_: torch.nn.CrossEntropyLoss
+  label_smoothing: 0.1  # Helps with small datasets
+
+# Early stopping configuration
+early_stopping:
+  patience: 30
+  min_delta: 0.001
+  mode: max
+  monitor: val_acc
+  verbose: true
+
+# Gradient clipping (important for stability)
+gradient_clip_val: 1.0
+gradient_clip_algorithm: norm
+
+# Mixed precision training
+precision: "16-mixed"  # Use automatic mixed precision
+
+# ViT-specific augmentation
+augmentation:
+  # RandAugment settings
+  randaugment:
+    enabled: true
+    n: 2  # Number of augmentation transformations
+    m: 9  # Magnitude of augmentation
+    
+  # MixUp settings
+  mixup:
+    enabled: true
+    alpha: 0.8
+    prob: 0.5
+    switch_prob: 0.5  # Probability of switching to CutMix
+    mode: batch
+    
+  # CutMix settings  
+  cutmix:
+    enabled: true
+    alpha: 1.0
+    prob: 0.5
+    
+  # Standard augmentations
+  random_crop: true
+  random_flip: true
+  color_jitter: false  # Disabled for grayscale
+  
+# Data loading
+dataloader:
+  num_workers: 4
+  pin_memory: true
+  prefetch_factor: 2
+  persistent_workers: true
+
+# Regularization
+regularization:
+  drop_path_rate: 0.1  # Stochastic depth
+  dropout_rate: 0.0  # Standard dropout (usually 0 for ViTs)
+  attention_dropout: 0.0  # Attention dropout
+  
+# Monitoring and logging
+log_every_n_steps: 10
+val_check_interval: 1.0
+save_top_k: 3
+save_last: true
+
+# Deterministic training
+deterministic: false  # Set true for reproducibility (slower)
+benchmark: true  # cudNN auto-tuner
+
+# Special handling for small datasets
+small_dataset_tricks:
+  enabled: true
+  stronger_augmentation: true
+  longer_training: true
+  patience_multiplier: 1.5

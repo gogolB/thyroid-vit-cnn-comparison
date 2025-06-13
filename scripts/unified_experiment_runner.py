@@ -38,6 +38,8 @@ from src.data.quality_preprocessing import create_quality_aware_transform
 from src.utils.device import get_device, device_info
 from src.training.train_cnn import ThyroidCNNModule
 from src.utils.checkpoint_utils import BestCheckpointCallback
+from src.models.vit import get_vit_model
+from src.training.train_vit import ThyroidViTModule
 
 
 console = Console()
@@ -97,7 +99,7 @@ class UnifiedExperimentRunner:
         """Create configuration for a single experiment.
         
         Args:
-            model_name: Name of the model (e.g., 'efficientnet_b0')
+            model_name: Name of the model (e.g., 'efficientnet_b0', 'vit_tiny')
             model_type: Type of model ('cnn' or 'vit')
             training_config: Training configuration to use
             overrides: Additional configuration overrides
@@ -127,7 +129,7 @@ class UnifiedExperimentRunner:
             cfg = compose(config_name="config", overrides=config_overrides)
             
             # Convert to container and resolve manually
-            cfg_dict = OmegaConf.to_container(cfg, resolve=False)  # Don't resolve yet
+            cfg_dict = OmegaConf.to_container(cfg, resolve=False)
             
             # Get project root
             project_root = self.config_dir.parent
@@ -158,14 +160,39 @@ class UnifiedExperimentRunner:
             # Apply replacements
             cfg_dict = replace_interpolations(cfg_dict)
             
+            # ViT-specific configuration handling
             if model_type == 'vit':
-                # Special handling for ViT models
+                # Set ViT-specific model target
                 cfg_dict['model']['_target_'] = 'src.models.vit.get_vit_model'
+                cfg_dict['model']['model_name'] = model_name
+                
+                # Use AdamW optimizer for ViT
                 cfg_dict['training']['optimizer']['_target_'] = 'torch.optim.AdamW'
                 
+                # ViT-specific training settings if not already overridden
+                if 'training' not in cfg_dict:
+                    cfg_dict['training'] = {}
+                    
+                # Use ViT-specific training config if available
+                if training_config == 'standard' and (self.config_dir / 'training' / 'vit_standard.yaml').exists():
+                    # Override with ViT-specific training
+                    config_overrides = [
+                        f"model={model_type}/{model_name}",
+                        "training=vit_standard"
+                    ]
+                    cfg = compose(config_name="config", overrides=config_overrides)
+                    cfg_dict = OmegaConf.to_container(cfg, resolve=False)
+                    cfg_dict = replace_interpolations(cfg_dict)
+                
                 # Layer-wise learning rate decay
-                if 'layer_decay' in cfg_dict['training']:
+                if 'layer_decay' in cfg_dict.get('training', {}):
                     cfg_dict['training']['layer_wise_lr_decay'] = True
+                    
+                # Ensure correct learning rate for ViT (typically lower)
+                if 'optimizer' in cfg_dict.get('training', {}):
+                    current_lr = cfg_dict['training']['optimizer'].get('lr', 0.001)
+                    if current_lr > 0.001:  # If using CNN LR, reduce it
+                        cfg_dict['training']['optimizer']['lr'] = 0.0005
             
             # Convert back to OmegaConf and resolve any remaining interpolations
             cfg = OmegaConf.create(cfg_dict)
@@ -185,6 +212,7 @@ class UnifiedExperimentRunner:
         finally:
             # Always clean up Hydra
             GlobalHydra.instance().clear()
+
     
     def run_single_experiment(
         self,
@@ -281,9 +309,12 @@ class UnifiedExperimentRunner:
         Returns:
             Training results
         """
+        # Determine model type from config
+        model_type = 'vit' if 'vit' in cfg.model.name else 'cnn'
+        
         # Print configuration
         console.print(Panel.fit(
-            f"[bold cyan]CNN Training: {cfg.model.name}[/bold cyan]\n"
+            f"[bold cyan]{model_type.upper()} Training: {cfg.model.name}[/bold cyan]\n"
             f"[dim]Dataset: {cfg.dataset.name}[/dim]",
             border_style="blue"
         ))
@@ -312,6 +343,11 @@ class UnifiedExperimentRunner:
         # Get augmentation level from config
         augmentation_level = cfg.training.get('augmentation_level', 'medium')
         
+        # For ViT models, we might want stronger augmentation
+        if model_type == 'vit' and augmentation_level == 'medium':
+            augmentation_level = 'strong'
+            console.print("[cyan]Using strong augmentation for ViT model[/cyan]")
+        
         train_transform = create_quality_aware_transform(
             target_size=cfg.dataset.image_size,
             quality_report_path=quality_path,
@@ -326,7 +362,7 @@ class UnifiedExperimentRunner:
             split='val'
         )
         
-        # Create data loaders with correct parameters
+        # Create data loaders
         data_loaders = create_data_loaders(
             root_dir=cfg.dataset.path,
             batch_size=cfg.training.batch_size,
@@ -343,9 +379,13 @@ class UnifiedExperimentRunner:
         console.print(f"  Val samples: {len(data_loaders['val'].dataset)}")
         console.print(f"  Test samples: {len(data_loaders['test'].dataset)}")
         
-        # Create model
+        # Create model based on type
         console.print("\n[cyan]Creating model...[/cyan]")
-        model = ThyroidCNNModule(cfg)
+        
+        if model_type == 'vit':
+            model = ThyroidViTModule(cfg)
+        else:
+            model = ThyroidCNNModule(cfg)
         
         # Print model info
         total_params = sum(p.numel() for p in model.parameters())
@@ -353,6 +393,7 @@ class UnifiedExperimentRunner:
         console.print(f"[green]✓ Model created[/green]")
         console.print(f"  Total parameters: {total_params:,}")
         console.print(f"  Trainable parameters: {trainable_params:,}")
+        console.print(f"  Model type: {model_type.upper()}")
         
         # Setup callbacks
         callbacks = []
@@ -360,8 +401,8 @@ class UnifiedExperimentRunner:
         # Model checkpoint
         checkpoint_callback = ModelCheckpoint(
             dirpath=cfg.paths.checkpoint_dir,
-            filename=f"{cfg.model.name}-{{epoch:02d}}-{{val_acc:.4f}}",  # Changed val_acc to val_acc
-            monitor='val_acc',  # Keep original metric name for monitoring
+            filename=f"{cfg.model.name}-{{epoch:02d}}-{{val_acc:.4f}}",
+            monitor='val_acc',
             mode='max',
             save_top_k=3,
             save_last=True,
@@ -372,35 +413,33 @@ class UnifiedExperimentRunner:
         # Early stopping
         if cfg.training.get('early_stopping', None):
             early_stop_callback = EarlyStopping(
-                monitor=cfg.training.early_stopping.monitor,
-                patience=cfg.training.early_stopping.patience,
-                mode=cfg.training.early_stopping.mode,
+                monitor='val_acc',
                 min_delta=cfg.training.early_stopping.min_delta,
+                patience=cfg.training.early_stopping.patience,
+                mode='max',
                 verbose=True
             )
             callbacks.append(early_stop_callback)
         
-        # Progress bar
-        progress_bar = RichProgressBar()
-        callbacks.append(progress_bar)
+        # Rich progress bar
+        callbacks.append(RichProgressBar())
         
         # Learning rate monitor
-        lr_monitor = LearningRateMonitor(logging_interval='epoch')
-        callbacks.append(lr_monitor)
+        callbacks.append(LearningRateMonitor(logging_interval='epoch'))
         
+        # Best checkpoint callback
         best_checkpoint_callback = BestCheckpointCallback(checkpoint_dir=Path(cfg.paths.checkpoint_dir))
         callbacks.append(best_checkpoint_callback)
         
         # Setup logger
-        logger = None
-        if cfg.wandb.mode != 'disabled':
-            logger = WandbLogger(
-                mode=cfg.wandb.mode,
+        wandb_logger = None
+        if cfg.get('wandb', {}).get('mode', 'disabled') != 'disabled':
+            wandb_logger = WandbLogger(
                 project=cfg.wandb.project,
-                entity=cfg.wandb.entity,
-                name=cfg.experiment_name,
-                tags=cfg.wandb.tags,
-                config=OmegaConf.to_container(cfg, resolve=True)
+                name=f"{cfg.model.name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+                config=OmegaConf.to_container(cfg, resolve=True),
+                save_dir=cfg.paths.log_dir,
+                mode=cfg.wandb.mode
             )
         
         # Update trainer config for device
@@ -433,12 +472,13 @@ class UnifiedExperimentRunner:
         else:
             trainer_config['accelerator'] = 'cpu'
             trainer_config['precision'] = 32
-        
+            
+        print(trainer_config)
         # Create trainer
         trainer = pl.Trainer(
             **trainer_config,
             callbacks=callbacks,
-            logger=logger
+            logger=wandb_logger
         )
         
         # Train
@@ -449,33 +489,29 @@ class UnifiedExperimentRunner:
             val_dataloaders=data_loaders['val']
         )
         
-        # Get training results
-        train_acc = trainer.callback_metrics.get('train/acc_epoch', 0.0)
-        val_acc = trainer.callback_metrics.get('val_acc', 0.0)
+        # Test
+        console.print("\n[cyan]Running test evaluation...[/cyan]")
+        test_results = trainer.test(
+            model,
+            dataloaders=data_loaders['test'],
+            ckpt_path='best'
+        )
         
-        results = {
-            'train_acc': float(train_acc),
-            'val_acc': float(val_acc),
-            'total_params': total_params,
-            'trainable_params': trainable_params,
+        # Extract results
+        result = {
+            'train_acc': float(trainer.callback_metrics.get('train_acc', 0)),
+            'val_acc': float(trainer.callback_metrics.get('val_acc', 0)),
+            'test_acc': float(test_results[0].get('test_acc', 0)),
+            'best_epoch': checkpoint_callback.best_model_score.item() if hasattr(checkpoint_callback, 'best_model_score') else 0,
+            'total_epochs': trainer.current_epoch + 1,
         }
         
-        # Test
-        if not cfg.trainer.fast_dev_run:
-            console.print("\n[cyan]Running test evaluation...[/cyan]")
-            test_results = trainer.test(model, dataloaders=data_loaders['test'])
-            
-            if test_results:
-                test_acc = test_results[0].get('test_acc', 0.0)
-                results['test_acc'] = float(test_acc)
-        
-        # Save final results
-        if logger:
+        # Clean up
+        if wandb_logger:
             wandb.finish()
         
-        console.print("\n[bold green]✓ Training complete![/bold green]")
-        
-        return results
+        return result
+
     
     def run_model_sweep(
         self,
@@ -563,41 +599,49 @@ class UnifiedExperimentRunner:
 
 def parse_args():
     """Parse command line arguments."""
-    parser = argparse.ArgumentParser(description='Unified experiment runner for thyroid classification')
+    parser = argparse.ArgumentParser(description='Unified CARS Thyroid Classification Runner')
     
     # Experiment mode
-    parser.add_argument('--mode', type=str, default='single',
-                       choices=['single', 'sweep', 'efficientnet', 'resnet', 'all'],
-                       help='Experiment mode')
+    parser.add_argument('mode', choices=['single', 'sweep', 'efficientnet', 'resnet', 'vit', 'all'],
+                       help='Experiment mode: single model, model sweep, or all models')
     
     # Model selection
-    parser.add_argument('--model', type=str, default='resnet18',
-                       help='Single model to train (for single mode)')
-    parser.add_argument('--models', nargs='+',
-                       help='List of models to train (for sweep mode)')
+    parser.add_argument('--model', '-m', type=str, default='resnet18',
+                       help='Model name for single mode (e.g., resnet18, efficientnet_b0, vit_tiny)')
+    
+    parser.add_argument('--model-type', type=str, choices=['cnn', 'vit'], default='cnn',
+                       help='Model type (cnn or vit)')
+    
+    parser.add_argument('--models', '-M', nargs='+', type=str,
+                       help='List of models for sweep mode')
     
     # Training configuration
-    parser.add_argument('--training-config', type=str, default='standard',
-                       choices=['standard', 'efficientnet'],
+    parser.add_argument('--training-config', '-t', type=str, default='standard',
                        help='Training configuration to use')
     
-    # Training parameters
-    parser.add_argument('--epochs', type=int, help='Number of training epochs')
-    parser.add_argument('--batch-size', type=int, help='Batch size for training')
-    parser.add_argument('--lr', type=float, help='Learning rate')
-    
-    # Device and performance
-    parser.add_argument('--device', type=str, default='auto',
-                       help='Device to use (auto, cuda, mps, cpu)')
+    # Quick test mode
     parser.add_argument('--quick-test', action='store_true',
-                       help='Run quick test with 2 epochs')
+                       help='Run quick test with limited epochs/batches')
     
-    # Logging
+    # Training overrides
+    parser.add_argument('--epochs', '-e', type=int,
+                       help='Override number of epochs')
+    
+    parser.add_argument('--batch-size', '-b', type=int,
+                       help='Override batch size')
+    
+    parser.add_argument('--lr', type=float,
+                       help='Override learning rate')
+    
+    # Other options
+    parser.add_argument('--device', type=str, default='auto',
+                       choices=['auto', 'cuda', 'mps', 'cpu'],
+                       help='Device to use for training')
+    
     parser.add_argument('--wandb-mode', type=str, default='online',
                        choices=['online', 'offline', 'disabled'],
                        help='Weights & Biases logging mode')
     
-    # Quality-aware preprocessing
     parser.add_argument('--no-quality-aware', action='store_true',
                        help='Disable quality-aware preprocessing')
     
@@ -623,6 +667,7 @@ def main():
     # Get available models
     available_models = runner.get_available_models()
     console.print(f"\n[cyan]Available CNN models:[/cyan] {', '.join(available_models['cnn'])}")
+    console.print(f"[cyan]Available ViT models:[/cyan] {', '.join(available_models['vit'])}")
     
     # Build configuration overrides
     overrides = {}
@@ -643,26 +688,66 @@ def main():
     results = {}
     
     if args.mode == 'single':
+        # Determine model type if not specified
+        if args.model in available_models['vit']:
+            model_type = 'vit'
+        elif args.model in available_models['cnn']:
+            model_type = 'cnn'
+        else:
+            model_type = args.model_type
+            
         # Single model experiment
         result = runner.run_single_experiment(
             model_name=args.model,
-            model_type='cnn',
+            model_type=model_type,
             training_config=args.training_config,
             overrides=overrides,
             quick_test=args.quick_test
         )
         results[args.model] = result
         
-    elif args.mode == 'sweep':
-        # Custom model sweep
-        models = args.models if args.models else available_models['cnn']
+    elif args.mode == 'vit':
+        # ViT model sweep
+        vit_models = available_models['vit']
+        if not vit_models:
+            console.print("[red]No ViT models found![/red]")
+            sys.exit(1)
+        
+        # Use ViT-specific training config if available
+        training_config = 'vit_standard' if (config_dir / 'training' / 'vit_standard.yaml').exists() else args.training_config
+        
         results = runner.run_model_sweep(
-            models=models,
-            model_type='cnn',
-            training_config=args.training_config,
+            models=vit_models,
+            model_type='vit',
+            training_config=training_config,
             overrides=overrides,
             quick_test=args.quick_test
         )
+        
+    elif args.mode == 'sweep':
+        # Custom model sweep
+        if args.models:
+            # Determine model types
+            for model in args.models:
+                if model in available_models['vit']:
+                    model_type = 'vit'
+                elif model in available_models['cnn']:
+                    model_type = 'cnn'
+                else:
+                    console.print(f"[yellow]Warning: Unknown model {model}, skipping[/yellow]")
+                    continue
+                
+                result = runner.run_single_experiment(
+                    model_name=model,
+                    model_type=model_type,
+                    training_config=args.training_config,
+                    overrides=overrides,
+                    quick_test=args.quick_test
+                )
+                results[model] = result
+        else:
+            console.print("[red]No models specified for sweep mode![/red]")
+            sys.exit(1)
         
     elif args.mode == 'efficientnet':
         # EfficientNet sweep

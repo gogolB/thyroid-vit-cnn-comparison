@@ -99,7 +99,7 @@ save_last: true
 
 # Deterministic training
 deterministic: false  # Set true for reproducibility (slower)
-benchmark: true  # cudNN auto-tuner
+benchmark: false  # cudNN auto-tuner
 
 # Special handling for small datasets
 small_dataset_tricks:

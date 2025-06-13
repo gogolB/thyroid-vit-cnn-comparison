@@ -1,5 +1,6 @@
 name: vit_base
 type: vision_transformer
+architecture: vit
 params:
   img_size: 256
   patch_size: 16

@@ -473,7 +473,6 @@ class UnifiedExperimentRunner:
             trainer_config['accelerator'] = 'cpu'
             trainer_config['precision'] = 32
             
-        print(trainer_config)
         # Create trainer
         trainer = pl.Trainer(
             **trainer_config,

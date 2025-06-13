@@ -50,15 +50,15 @@ class ThyroidViTModule(pl.LightningModule):
         # Get model configuration
         model_config = self.config.model
         
-        # Create model using factory function
+        # Create model using factory function - convert DictConfig values to primitives
         model = get_vit_model(
             model_name=model_config.name,
-            img_size=self.config.dataset.image_size,
+            img_size=int(self.config.dataset.image_size),
             in_chans=1,  # Grayscale
-            num_classes=self.config.dataset.num_classes,
-            drop_rate=model_config.get('drop_rate', 0.0),
-            attn_drop_rate=model_config.get('attn_drop_rate', 0.0),
-            drop_path_rate=model_config.get('drop_path_rate', 0.1),
+            num_classes=int(self.config.dataset.num_classes),
+            drop_rate=float(model_config.get('drop_rate', 0.0)),
+            attn_drop_rate=float(model_config.get('attn_drop_rate', 0.0)),
+            drop_path_rate=float(model_config.get('drop_path_rate', 0.1)),
         )
         
         return model
@@ -143,20 +143,21 @@ class ThyroidViTModule(pl.LightningModule):
         else:
             param_groups = self.model.parameters()
         
-        # Create optimizer
+        # Create optimizer - ensure all values are primitive types
+        print(opt_config)
         if opt_config._target_ == 'torch.optim.AdamW':
             optimizer = torch.optim.AdamW(
                 param_groups,
-                lr=opt_config.lr,
-                weight_decay=opt_config.get('weight_decay', 0.05),
-                betas=opt_config.get('betas', (0.9, 0.999))
+                lr=float(opt_config.lr),
+                weight_decay=float(opt_config.get('weight_decay', 0.05)),
+                betas=tuple(opt_config.get('betas', (0.9, 0.999)))
             )
         else:
             # Fallback to Adam
             optimizer = torch.optim.Adam(
                 param_groups,
-                lr=opt_config.lr,
-                weight_decay=opt_config.get('weight_decay', 0.0)
+                lr=float(opt_config.lr),
+                weight_decay=float(opt_config.get('weight_decay', 0.0))
             )
         
         # Create scheduler if specified
@@ -166,8 +167,8 @@ class ThyroidViTModule(pl.LightningModule):
             if sched_config._target_ == 'torch.optim.lr_scheduler.CosineAnnealingLR':
                 scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
                     optimizer,
-                    T_max=sched_config.get('T_max', self.config.training.num_epochs),
-                    eta_min=sched_config.get('eta_min', 1e-6)
+                    T_max=int(sched_config.get('T_max', self.config.training.num_epochs)),
+                    eta_min=float(sched_config.get('eta_min', 1e-6))
                 )
             elif 'transformers' in sched_config._target_:
                 # For transformers schedulers, we need to handle them differently
@@ -197,8 +198,8 @@ class ThyroidViTModule(pl.LightningModule):
     def _get_parameter_groups_with_decay(self):
         """Get parameter groups with layer-wise learning rate decay."""
         # This is a simplified version - full implementation would decay by layer depth
-        decay_rate = self.config.training.get('layer_decay', 0.75)
-        base_lr = self.config.training.optimizer.lr
+        decay_rate = float(self.config.training.get('layer_decay', 0.75))
+        base_lr = float(self.config.training.optimizer.lr)
         
         # Group parameters by layer
         param_groups = []

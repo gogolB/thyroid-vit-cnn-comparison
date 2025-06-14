@@ -699,7 +699,7 @@ def load_pretrained_swin_from_timm(
     pretrained_cfg: Dict[str, Any],
     **kwargs
 ) -> Optional[nn.Module]:
-    """Load pretrained Swin model from timm library with size adaptation"""
+    """Load pretrained Swin model from timm library"""
     import timm
     
     # Get model parameters
@@ -707,7 +707,7 @@ def load_pretrained_swin_from_timm(
     in_chans = kwargs.get('in_chans', 1)
     img_size = kwargs.get('img_size', 256)
     
-    # Get timm model name from pretrained_cfg or use default mapping
+    # Get timm model name
     timm_model_map = {
         'swin_tiny': 'swin_tiny_patch4_window7_224',
         'swin_small': 'swin_small_patch4_window7_224', 
@@ -725,53 +725,15 @@ def load_pretrained_swin_from_timm(
     print(f"Loading pretrained weights from timm: {timm_model_name}")
     
     try:
-        # First create model with original size to load weights properly
+        # Create model with original size (don't try to adapt to 256)
         model = timm.create_model(
             timm_model_name,
             pretrained=True,
-            num_classes=0,  # Remove classifier first
+            num_classes=num_classes,
             in_chans=3  # Load with RGB weights initially
         )
         
-        # Now update for our target size
-        if img_size != 224:
-            print(f"Adapting model from 224x224 to {img_size}x{img_size}")
-            
-            # Update patch embedding for new size
-            if hasattr(model, 'patch_embed'):
-                patch_size = model.patch_embed.patch_size[0]
-                new_grid_size = img_size // patch_size
-                
-                model.patch_embed.img_size = (img_size, img_size)
-                model.patch_embed.grid_size = (new_grid_size, new_grid_size)
-                model.patch_embed.num_patches = new_grid_size * new_grid_size
-                
-                # Update absolute position embeddings if they exist
-                if hasattr(model, 'absolute_pos_embed') and model.absolute_pos_embed is not None:
-                    old_pos_embed = model.absolute_pos_embed
-                    old_grid_size = int(old_pos_embed.shape[1] ** 0.5)
-                    
-                    if old_grid_size != new_grid_size:
-                        print(f"Interpolating position embeddings from {old_grid_size}x{old_grid_size} to {new_grid_size}x{new_grid_size}")
-                        
-                        # Interpolate position embeddings
-                        pos_embed = old_pos_embed.reshape(1, old_grid_size, old_grid_size, -1).permute(0, 3, 1, 2)
-                        pos_embed = F.interpolate(
-                            pos_embed,
-                            size=(new_grid_size, new_grid_size),
-                            mode='bicubic',
-                            align_corners=False
-                        )
-                        pos_embed = pos_embed.permute(0, 2, 3, 1).reshape(1, -1, old_pos_embed.shape[-1])
-                        model.absolute_pos_embed = nn.Parameter(pos_embed)
-        
-        # Add new classifier for our number of classes
-        if hasattr(model, 'head'):
-            in_features = model.head.in_features if hasattr(model.head, 'in_features') else model.num_features
-        else:
-            in_features = model.num_features
-            
-        model.head = nn.Linear(in_features, num_classes)
+        # NOTE: Removed the size adaptation code - we'll use 224x224
         
         # Adapt for grayscale input if needed
         if in_chans == 1:
@@ -802,7 +764,7 @@ def load_pretrained_swin_from_timm(
         if 'drop_path_rate' in kwargs:
             model.drop_path_rate = kwargs['drop_path_rate']
             
-        print(f"Successfully loaded pretrained {model_name} for {img_size}x{img_size} images")
+        print(f"Successfully loaded pretrained {model_name}")
         print(f"Model parameters: {sum(p.numel() for p in model.parameters()):,}")
         
         return model

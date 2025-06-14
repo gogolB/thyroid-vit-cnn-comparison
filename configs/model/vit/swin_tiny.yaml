@@ -6,7 +6,7 @@ type: swin
 architecture: vit
 params:
   # Architecture parameters
-  img_size: 256
+  img_size: 224
   patch_size: 4
   in_chans: 1  # Grayscale medical images
   num_classes: 2

@@ -111,6 +111,10 @@ class ThyroidViTModule(pl.LightningModule):
     
     def forward(self, x):
         """Forward pass."""
+        # Special handling for Swin models - they need 224x224
+        if 'swin' in self.config.model.name.lower() and x.shape[-1] != 224:
+            x = F.interpolate(x, size=(224, 224), mode='bilinear', align_corners=False)
+        
         return self.model(x)
     
     def _handle_logits_shape(self, logits, labels, context=""):

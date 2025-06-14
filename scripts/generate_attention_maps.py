@@ -1,7 +1,7 @@
 """
-Modernized Swin Transformer visualization with artifact removal and a clean aesthetic.
-Generates publication-quality figures by targeting stable feature layers and using
-perceptually uniform colormaps.
+Modernized Swin Transformer visualization with a bespoke, high-fidelity
+Attention Rollout implementation. This script correctly inverts the windowing and
+shifting mechanisms of the Swin architecture to produce artifact-free heatmaps.
 """
 
 import sys
@@ -15,7 +15,6 @@ import torch.nn.functional as F
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
-from matplotlib.patches import Rectangle
 from typing import Dict, List, Optional, Tuple
 import cv2
 from rich.console import Console
@@ -24,8 +23,7 @@ import timm
 from skimage import exposure
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
-import json
-from datetime import datetime
+from timm.models.swin_transformer import SwinTransformerBlock
 
 warnings.filterwarnings('ignore')
 console = Console()
@@ -44,204 +42,152 @@ def enhance_contrast(image: np.ndarray) -> np.ndarray:
     return enhanced
 
 
-class SwinGradCAM:
+class SwinAttentionRollout:
     """
-    Robust GradCAM for Swin Transformers.
-    Targets stable, high-resolution layers and smooths results to prevent artifacts.
+    High-fidelity Attention Rollout for Swin Transformers.
+    This implementation correctly reverses the windowing and shifting operations
+    to generate a spatially coherent attention map.
     """
-    def __init__(self, model: nn.Module):
-        self.model = model
-        self.gradients = None
-        self.activations = None
-        self.handles = []
+    def __init__(self, model: nn.Module, device: str = 'cpu'):
+        self.model = model.to(device)
+        self.device = device
+        self.hooks = []
+        self.attentions = []
+        self._register_hooks()
 
-        # Find the best target layer for artifact-free, high-resolution CAMs.
-        # Priority:
-        # 1. Final normalization layer (most stable, but low-res).
-        # 2. Output of the final stage (good balance of stability and resolution).
-        # 3. Output of the second-to-last stage (higher resolution).
-        target_layer_name = None
-        potential_targets = [
-            'norm', # Final norm layer
-            'layers.3', 'layers.2', 'layers.1' # Stage outputs
-        ]
+    def _register_hooks(self):
+        """Registers forward hooks on all SwinTransformerBlocks."""
+        for name, module in self.model.named_modules():
+            if isinstance(module, SwinTransformerBlock):
+                hook_fn = self._create_hook_fn(module)
+                self.hooks.append(module.attn.attn_drop.register_forward_hook(hook_fn))
+        console.print(f"[green]Registered [bold]{len(self.hooks)}[/bold] hooks for Attention Rollout.[/green]")
 
-        model_layers = {name: module for name, module in model.named_modules()}
+    def _create_hook_fn(self, module: SwinTransformerBlock):
+        """Creates a hook function that captures attention and context."""
+        def hook(m, inp, outp):
+            self.attentions.append({
+                'attn': outp.detach().to(self.device),
+                'input_resolution': module.input_resolution,
+                'window_size': module.window_size,
+                'shift_size': module.shift_size,
+            })
+        return hook
 
-        for target in potential_targets:
-            if target in model_layers:
-                target_layer_name = target
-                break
-        
-        if target_layer_name:
-            module = model_layers[target_layer_name]
-            self.handles.append(module.register_forward_hook(self._save_activation))
-            self.handles.append(module.register_full_backward_hook(self._save_gradient))
-            console.print(f"[green]Registered GradCAM hooks on optimal layer: [bold]{target_layer_name}[/bold][/green]")
-        else:
-            console.print("[red]Error: Could not find a suitable layer for GradCAM.[/red]")
-
-    def _save_activation(self, module, input, output):
-        # Handle tuple outputs from stages
-        if isinstance(output, tuple):
-            output = output[0]
-        self.activations = output.detach()
-
-    def _save_gradient(self, module, grad_input, grad_output):
-        self.gradients = grad_output[0].detach()
-
-    def generate_cam(self, input_tensor: torch.Tensor, class_idx: Optional[int] = None) -> np.ndarray:
-        """Generate a clean, artifact-free Class Activation Map."""
+    def generate(self, input_tensor: torch.Tensor) -> np.ndarray:
+        """
+        Generates the high-fidelity attention map by running the rollout algorithm.
+        """
         self.model.eval()
-        input_tensor.requires_grad = True
-        output = self.model(input_tensor)
+        self.attentions = [] 
 
-        if class_idx is None:
-            class_idx = output.argmax(dim=1).item()
+        with torch.no_grad():
+            _ = self.model(input_tensor.to(self.device))
 
-        self.model.zero_grad()
-        class_score = output[0, class_idx]
-        class_score.backward(retain_graph=True)
+        H, W = self.attentions[0]['input_resolution']
+        rollout = torch.eye(H * W, device=self.device)
 
-        if self.gradients is None or self.activations is None:
-            console.print("[yellow]Warning: Gradients/activations not captured. Returning empty CAM.[/yellow]")
-            return np.zeros((7, 7))
+        for data in self.attentions:
+            attn = data['attn'].squeeze(0).mean(dim=1)
+            I = torch.eye(attn.shape[-1], device=self.device)
+            attn = attn + I
+            attn = attn / attn.sum(dim=-1, keepdim=True)
 
-        # Detach and get the first item of the batch
-        gradients = self.gradients[0]
-        activations = self.activations[0]
+            H, W = data['input_resolution']
+            win_size = data['window_size']
+            num_tokens_win = win_size * win_size
+            num_windows = H * W // num_tokens_win
 
-        # Reshape if features are flattened (e.g., from [L, C] to [H, W, C])
-        if gradients.dim() == 2:
-            L, C = gradients.shape
-            H = W = int(np.sqrt(L))
-            if H * W == L:
-                gradients = gradients.view(H, W, C)
-                activations = activations.view(H, W, C)
-            else:
-                 console.print(f"[yellow]Warning: Non-square feature map (L={L}). CAM may be inaccurate.[/yellow]")
-                 return np.zeros((7,7))
-        
-        # Permute to [C, H, W] for pooling
-        gradients = gradients.permute(2, 0, 1)
-        activations = activations.permute(2, 0, 1)
+            layer_attn = torch.zeros(H * W, H * W, device=self.device)
+            for i in range(num_windows):
+                start_idx = i * num_tokens_win
+                end_idx = start_idx + num_tokens_win
+                layer_attn[start_idx:end_idx, start_idx:end_idx] = attn[i]
 
-        weights = gradients.mean(dim=(1, 2), keepdim=True)
-        cam = torch.sum(weights * activations, dim=0)
-        cam = F.relu(cam)
-        cam = cam.cpu().numpy()
+            shift_size = data['shift_size']
+            if shift_size > 0:
+                grid = torch.arange(H * W, device=self.device).view(H, W)
+                shifted_grid = torch.roll(grid, shifts=(shift_size, shift_size), dims=(0, 1))
+                perm = shifted_grid.flatten().argsort()
+                layer_attn = layer_attn[perm, :][:, perm]
 
-        # ** CRITICAL STEP FOR ARTIFACT REMOVAL **
-        # Smooth the raw CAM before upscaling to remove high-frequency artifacts (stripes).
-        cam = cv2.GaussianBlur(cam, (5, 5), 1.5)
+            rollout = layer_attn @ rollout
 
-        # Normalize to [0, 1] range
-        if cam.max() > cam.min():
-            cam = (cam - cam.min()) / (cam.max() - cam.min())
-        
-        return cam
+        final_map = rollout.diag().reshape(H, W)
+        result = final_map.cpu().numpy()
+        result = (result - result.min()) / (result.max() - result.min())
+        return result
 
     def remove_hooks(self):
-        for handle in self.handles:
+        for handle in self.hooks:
             handle.remove()
+        self.hooks = []
 
 
 class RadicalSwinFeatureVisualizer:
-    """Visualizes spatially-aware features from Swin, removing architectural artifacts."""
     def __init__(self, model: nn.Module):
         self.model = model
         self.features = {}
         self.hooks = []
-
     def get_intermediate_features(self, input_tensor: torch.Tensor) -> Dict[str, torch.Tensor]:
-        """Extracts features from the end of each stage."""
         self.features = {}
-        
         def make_hook(name):
             def hook(module, input, output):
-                if isinstance(output, tuple):
-                    output = output[0]
-                self.features[name] = output.detach().cpu()[0] # Store first item in batch
+                if isinstance(output, tuple): output = output[0]
+                self.features[name] = output.detach().cpu()[0]
             return hook
-
-        hook_points = [('patch_embed', self.model.patch_embed)]
-        for idx, layer in enumerate(self.model.layers):
-            hook_points.append((f'stage{idx+1}', layer))
-
+        hook_points = [('patch_embed', self.model.patch_embed)] + \
+                      [(f'stage{i+1}', l) for i, l in enumerate(self.model.layers)]
         for name, module in hook_points:
             self.hooks.append(module.register_forward_hook(make_hook(name)))
-        
-        with torch.no_grad():
-            _ = self.model(input_tensor)
-        
-        for hook in self.hooks:
-            hook.remove()
+        with torch.no_grad(): _ = self.model(input_tensor)
+        for hook in self.hooks: hook.remove()
         self.hooks = []
         return self.features
-
     def _get_spatial_map(self, features: torch.Tensor) -> np.ndarray:
-        """Converts feature tensors into a smooth, artifact-free spatial map."""
-        if features.dim() == 2:  # [L, C]
+        if features.dim() == 2:
             L, C = features.shape
             H = W = int(np.sqrt(L))
             if H * W != L: return np.zeros((H, W))
             features = features.view(H, W, C)
-        
-        # Use standard deviation across channels as a proxy for feature importance
         feat_map = features.std(dim=-1).numpy()
-        
-        # Smooth to remove grid-like artifacts
         feat_map = cv2.GaussianBlur(feat_map, (5, 5), 1.5)
-
-        # Normalize
         if feat_map.max() > feat_map.min():
             feat_map = (feat_map - feat_map.min()) / (feat_map.max() - feat_map.min())
         return feat_map
-
     def extract_pca_features(self, features: torch.Tensor) -> Tuple[List[np.ndarray], np.ndarray]:
-        """Extracts principal components and smooths them for visualization."""
         if features.dim() == 2:
             L, C = features.shape
             H = W = int(np.sqrt(L))
             if H * W != L: return [np.zeros((H,W))] * 3, np.array([0,0,0])
             features = features.view(H, W, C)
-        
         H, W, C = features.shape
         feat_flat = features.reshape(-1, C).numpy()
-
         if feat_flat.shape[0] <= 3 or C <= 3:
-            maps = [self._get_spatial_map(features)] * 3
-            return maps, np.array([1.0, 0, 0])
-
+            return [self._get_spatial_map(features)] * 3, np.array([1.0, 0, 0])
         scaler = StandardScaler()
         feat_std = scaler.fit_transform(feat_flat)
         pca = PCA(n_components=3)
         feat_pca = pca.fit_transform(feat_std)
-
         feat_maps = []
         for i in range(3):
             feat_map = feat_pca[:, i].reshape(H, W)
-            # Smooth each component map
             feat_map = cv2.GaussianBlur(feat_map, (5, 5), 1.5)
-            # Normalize
             if feat_map.max() > feat_map.min():
                 feat_map = (feat_map - feat_map.min()) / (feat_map.max() - feat_map.min())
             feat_maps.append(feat_map)
-
         return feat_maps, pca.explained_variance_ratio_
-
     def compute_feature_diversity(self, features: torch.Tensor) -> np.ndarray:
-        """Computes a smoothed map of feature variance across channels."""
         return self._get_spatial_map(features)
 
 
 def visualize_swin_attention_modern(model: nn.Module, input_tensor: torch.Tensor,
                                   original_image: np.ndarray, actual_label: int,
-                                  save_path: Optional[Path] = None):
-    """Generates a modern, publication-quality visualization."""
+                                  save_path: Optional[Path] = None, device: str = 'cpu'):
+    """Generates a modern, publication-quality visualization using high-fidelity Attention Rollout."""
     model.eval()
     with torch.no_grad():
-        output = model(input_tensor)
+        output = model(input_tensor.to(device))
         probabilities = torch.softmax(output, dim=1)
         predicted_class = output.argmax(dim=1).item()
         confidence = probabilities[0, predicted_class].item()
@@ -251,41 +197,37 @@ def visualize_swin_attention_modern(model: nn.Module, input_tensor: torch.Tensor
     predicted_name = class_names[predicted_class]
     is_correct = actual_label == predicted_class
 
-    # --- Modern Plotting Setup ---
-    plt.style.use('default') # Reset style
+    plt.style.use('default')
     fig = plt.figure(figsize=(15, 8), constrained_layout=True)
     gs = fig.add_gridspec(2, 5, height_ratios=[1, 1])
 
-    # --- 1. Original Image ---
     ax = fig.add_subplot(gs[0, 0])
     img_enhanced = enhance_contrast(original_image)
     ax.imshow(img_enhanced, cmap='gray')
-    ax.set_title(f"Original Image\nPredicted: {predicted_name} ({confidence:.1%})", weight='bold')
+    ax.set_title("Original Image", weight='bold')
     ax.axis('off')
 
-    # --- 2. GradCAM ---
-    console.print("[cyan]Generating GradCAM...[/cyan]")
+    console.print("[cyan]Generating High-Fidelity Attention Rollout...[/cyan]")
     ax = fig.add_subplot(gs[0, 1])
-    gradcam_gen = SwinGradCAM(model)
-    cam = gradcam_gen.generate_cam(input_tensor, class_idx=predicted_class)
-    gradcam_gen.remove_hooks()
+    rollout_gen = SwinAttentionRollout(model, device=device)
+    attention_map = rollout_gen.generate(input_tensor)
+    rollout_gen.remove_hooks()
     
-    cam_resized = cv2.resize(cam, (img_enhanced.shape[1], img_enhanced.shape[0]), interpolation=cv2.INTER_CUBIC)
+    map_resized = cv2.resize(attention_map, (img_enhanced.shape[1], img_enhanced.shape[0]), interpolation=cv2.INTER_CUBIC)
     ax.imshow(img_enhanced, cmap='gray')
-    ax.imshow(cam_resized, cmap='inferno', alpha=0.5)
-    ax.set_title("GradCAM Focus", weight='bold')
+    ax.imshow(map_resized, cmap='inferno', alpha=0.5)
+    ax.set_title("Attention Rollout", weight='bold')
     ax.axis('off')
 
-    # --- 3. Feature Extraction ---
     console.print("[cyan]Extracting hierarchical features...[/cyan]")
     feature_viz = RadicalSwinFeatureVisualizer(model)
-    features = feature_viz.get_intermediate_features(input_tensor)
+    features = feature_viz.get_intermediate_features(input_tensor.to(device))
     
     stage_names = ['patch_embed', 'stage1', 'stage2', 'stage3']
     stage_positions = [(0, 2), (0, 3), (0, 4), (1, 0)]
     stage_titles = ['Patch Embed', 'Stage 1', 'Stage 2', 'Stage 3']
     stage_variances = []
-
+    
     for name, pos, title in zip(stage_names, stage_positions, stage_titles):
         ax = fig.add_subplot(gs[pos[0], pos[1]])
         if name in features:
@@ -297,25 +239,19 @@ def visualize_swin_attention_modern(model: nn.Module, input_tensor: torch.Tensor
         ax.set_title(title)
         ax.axis('off')
 
-    # --- 4. Feature Diversity ---
     ax = fig.add_subplot(gs[1, 1])
     if 'stage2' in features:
-        diversity_map = feature_viz.compute_feature_diversity(features['stage2'])
-        ax.imshow(diversity_map, cmap='plasma')
+        ax.imshow(feature_viz.compute_feature_diversity(features['stage2']), cmap='plasma')
     ax.set_title("Feature Diversity")
     ax.axis('off')
 
-    # --- 5. PCA Components (RGB) ---
     ax = fig.add_subplot(gs[1, 2])
     if 'stage3' in features:
         pca_maps, explained_var = feature_viz.extract_pca_features(features['stage3'])
-        rgb_composite = np.stack(pca_maps, axis=-1)
-        ax.imshow(rgb_composite)
-        var_text = f"R:{explained_var[0]:.1%} G:{explained_var[1]:.1%} B:{explained_var[2]:.1%}"
-        ax.set_title(f"PCA Components\n{var_text}")
+        ax.imshow(np.stack(pca_maps, axis=-1))
+        ax.set_title(f"PCA Components\nR:{explained_var[0]:.1%} G:{explained_var[1]:.1%} B:{explained_var[2]:.1%}")
     ax.axis('off')
 
-    # --- 6. Feature Evolution ---
     ax = fig.add_subplot(gs[1, 3:])
     if stage_variances:
         variances = np.array(stage_variances)
@@ -327,10 +263,14 @@ def visualize_swin_attention_modern(model: nn.Module, input_tensor: torch.Tensor
         ax.spines['right'].set_visible(False)
         ax.grid(axis='y', linestyle='--', alpha=0.6)
 
-    # --- Figure Super Title ---
-    result_str = "Correct" if is_correct else "Incorrect"
-    fig.suptitle(f"Swin Transformer Analysis | Actual: {actual_name} | Result: {result_str}",
-                 fontsize=16, weight='bold')
+    # --- UPDATED Super Title with detailed info ---
+    result_symbol = "✓" if is_correct else "✗"
+    super_title = (
+        f"Swin Transformer Analysis\n"
+        f"Actual: {actual_name} | Predicted: {predicted_name} "
+        f"({confidence:.1%}) | Result: {result_symbol}"
+    )
+    fig.suptitle(super_title, fontsize=16, weight='bold')
 
     if save_path:
         plt.savefig(save_path, dpi=300, bbox_inches='tight', facecolor='white')
@@ -339,56 +279,55 @@ def visualize_swin_attention_modern(model: nn.Module, input_tensor: torch.Tensor
     else:
         plt.show()
 
-# Main execution logic remains largely the same, but calls the new viz function
+
+def load_swin_model(checkpoint_path: str, device: str = 'cpu') -> Optional[nn.Module]:
+    """Loads a Swin model from a checkpoint file."""
+    try:
+        checkpoint = torch.load(checkpoint_path, map_location=device)
+        model_file = Path(checkpoint_path).stem.lower()
+        if 'tiny' in model_file: model_name = 'swin_tiny_patch4_window7_224'
+        elif 'small' in model_file: model_name = 'swin_small_patch4_window7_224'
+        else: model_name = 'swin_base_patch4_window7_224'
+        
+        model = timm.create_model(model_name, pretrained=False, num_classes=2, in_chans=1)
+        state_dict = checkpoint.get('state_dict', checkpoint)
+        state_dict = {k.replace('model.', ''): v for k, v in state_dict.items()}
+        model.load_state_dict(state_dict, strict=False)
+        
+        console.print(f"[green]✓ Loaded {model_name} successfully[/green]")
+        model.eval()
+        return model.to(device)
+    except Exception as e:
+        console.print(f"[red]Error loading model: {e}[/red]")
+        return None
+
+
 def main():
     # Setup paths
     checkpoint_dir = Path("checkpoints/best")
-    output_dir = Path("outputs/attention_maps")
+    output_dir = Path("outputs/attention_maps_rollout")
     output_dir.mkdir(parents=True, exist_ok=True)
     data_dir = Path("data/raw")
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
     
     console.print("[cyan]Loading dataset...[/cyan]")
-
-    # A placeholder for your dataset loading logic.
-    # This needs to be adapted to your actual `CARSThyroidDataset` and `create_quality_aware_transform`
-    # For now, we'll create dummy data to ensure the script runs.
     try:
         from src.data.dataset import CARSThyroidDataset
         from src.data.quality_preprocessing import create_quality_aware_transform
         
-        quality_report_path = Path('reports/quality_report.json')
-        if not quality_report_path.exists(): quality_report_path = None
-
-        transform = create_quality_aware_transform(
-            target_size=224, quality_report_path=quality_report_path, split='val'
-        )
-        dataset = CARSThyroidDataset(
-            root_dir=data_dir, split='test', transform=transform, target_size=224
-        )
-        raw_dataset = CARSThyroidDataset(
-            root_dir=data_dir, split='test', transform=None, target_size=224
-        )
+        transform = create_quality_aware_transform(target_size=224, split='val')
+        dataset = CARSThyroidDataset(root_dir=data_dir, split='val', transform=transform, target_size=224)
+        raw_dataset = CARSThyroidDataset(root_dir=data_dir, split='val', transform=None, target_size=224)
         
         sample_indices = [i for i, label in enumerate(dataset.labels) if label == 0][:1] + \
                          [i for i, label in enumerate(dataset.labels) if label == 1][:1]
-                         
-        for i in sample_indices:
-            if i >= len(dataset):
-                sample_indices.remove(i)
-
-        samples = [(dataset._load_image(i), dataset[i][0].unsqueeze(0), dataset[i][1]) for i in sample_indices]
-
-    except (ImportError, FileNotFoundError) as e:
+        if not sample_indices:
+             raise FileNotFoundError("No samples found in dataset.")
+        samples = [(raw_dataset._load_image(i), dataset[i][0].unsqueeze(0), dataset[i][1]) for i in sample_indices]
+    except Exception as e:
         console.print(f"[yellow]Warning: Could not load dataset ({e}). Using dummy data.[/yellow]")
-        samples = [
-            (np.random.rand(224, 224), torch.randn(1, 1, 224, 224), 0), # Dummy normal
-            (np.random.rand(224, 224), torch.randn(1, 1, 224, 224), 1)  # Dummy cancer
-        ]
+        samples = [(np.random.rand(224, 224), torch.randn(1, 1, 224, 224), 0)]
 
-    # Process with each model
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    console.print(f"[cyan]Using device: {device}[/cyan]")
-    
     model_files = ['swin_tiny-best.ckpt', 'swin_small-best.ckpt', 'swin_base-best.ckpt']
     
     for model_file in model_files:
@@ -397,50 +336,19 @@ def main():
             console.print(f"[yellow]Checkpoint not found: {checkpoint_path}[/yellow]")
             continue
             
-        console.print(f"\n[cyan]Loading {model_file}...[/cyan]")
-        model = load_swin_model(str(checkpoint_path), device=str(device))
+        model = load_swin_model(str(checkpoint_path), device=device)
         if model is None: continue
 
         for idx, (raw_img, tensor, label) in enumerate(samples):
-            tensor = tensor.to(device)
             label_str = 'normal' if label == 0 else 'cancerous'
             model_name_clean = model_file.replace('-best.ckpt', '')
-            save_path = output_dir / f"{model_name_clean}_sample{idx+1}_{label_str}_modern.png"
+            save_path = output_dir / f"{model_name_clean}_sample{idx+1}_{label_str}_rollout_final.png"
             
-            console.print(f"  Processing sample {idx+1} ({label_str})...")
-            try:
-                visualize_swin_attention_modern(model, tensor, raw_img, label, save_path)
-            except Exception as e:
-                console.print(f"    [red]Visualization failed: {e}[/red]")
-                import traceback
-                traceback.print_exc()
+            console.print(f"  Processing sample {idx+1} ({label_str}) with {model_name_clean}...")
+            visualize_swin_attention_modern(model, tensor, raw_img, label, save_path, device)
 
-    console.print("\n[bold green]✓ Modern visualization complete![/bold green]")
-
-def load_swin_model(checkpoint_path, device='cpu'):
-    """Loads a Swin model from a checkpoint file."""
-    try:
-        checkpoint = torch.load(checkpoint_path, map_location=device,  weights_only=False)
-        model_file = Path(checkpoint_path).stem.lower()
-        
-        if 'tiny' in model_file: model_name = 'swin_tiny_patch4_window7_224'
-        elif 'small' in model_file: model_name = 'swin_small_patch4_window7_224'
-        elif 'base' in model_file: model_name = 'swin_base_patch4_window7_224'
-        else: model_name = 'swin_tiny_patch4_window7_224'
-        
-        model = timm.create_model(model_name, pretrained=False, num_classes=2, in_chans=1)
-        
-        state_dict = checkpoint.get('state_dict', checkpoint)
-        # Clean keys (e.g., remove 'model.' prefix)
-        state_dict = {k.replace('model.', ''): v for k, v in state_dict.items()}
-        
-        model.load_state_dict(state_dict, strict=False)
-        console.print(f"[green]✓ Loaded {model_name} successfully[/green]")
-        model.eval()
-        return model.to(device)
-    except Exception as e:
-        console.print(f"[red]Error loading model: {e}[/red]")
-        return None
+    console.print("\n[bold green]✓ High-Fidelity Rollout Visualization Complete![/bold green]")
+    console.print(f"   Outputs saved to: {output_dir}")
 
 if __name__ == "__main__":
     main()

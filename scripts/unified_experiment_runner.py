@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Unified Experiment Runner for CARS Thyroid Classification
-Runs all CNN and Vision Transformer experiments directly without subprocesses
-Supports ResNet, EfficientNet, DenseNet, Inception, ViT, DeiT, and Swin models
+Runs all CNN experiments directly without subprocesses
+Supports ResNet, EfficientNet, DenseNet, and Inception models
 """
 
 import os
@@ -39,30 +39,16 @@ from src.data.quality_preprocessing import create_quality_aware_transform
 from src.utils.device import get_device, device_info
 from src.training.train_cnn import ThyroidCNNModule
 from src.utils.checkpoint_utils import BestCheckpointCallback
+from src.models.vit import get_vit_model
+from src.training.train_vit import ThyroidViTModule
 
-# Import ViT models if available
-try:
-    from src.models.vit import get_vit_model
-    from src.training.train_vit import ThyroidViTModule
-    VIT_AVAILABLE = True
-except ImportError:
-    VIT_AVAILABLE = False
 
-# Import Swin models if available
-try:
-    from src.models.vit.swin_transformer import (
-        create_swin_tiny, create_swin_small, create_swin_base, 
-        create_swin_large, create_swin_medical
-    )
-    SWIN_AVAILABLE = True
-except ImportError:
-    SWIN_AVAILABLE = False
 
 console = Console()
 
 
 class UnifiedExperimentRunner:
-    """Unified experiment runner for all CNN and Vision Transformer models."""
+    """Unified experiment runner for all CNN models."""
     
     def __init__(self, config_dir: Path):
         """Initialize the experiment runner.
@@ -81,12 +67,6 @@ class UnifiedExperimentRunner:
             "[dim]Direct execution - No subprocesses[/dim]",
             border_style="blue"
         ))
-        
-        # Detect available features
-        if not VIT_AVAILABLE:
-            console.print("[yellow]Warning: Vision Transformer models not available[/yellow]")
-        if not SWIN_AVAILABLE and VIT_AVAILABLE:
-            console.print("[yellow]Warning: Swin Transformer models not available[/yellow]")
     
     def get_available_models(self) -> Dict[str, List[str]]:
         """Get available model configurations."""
@@ -100,16 +80,14 @@ class UnifiedExperimentRunner:
         if cnn_dir.exists():
             for config_file in cnn_dir.glob('*.yaml'):
                 model_name = config_file.stem
-                if model_name != '__init__':  # Skip __init__.yaml
-                    models['cnn'].append(model_name)
+                models['cnn'].append(model_name)
         
-        # Scan ViT models
+        # Scan ViT models (Phase 3)
         vit_dir = self.config_dir / 'model' / 'vit'
         if vit_dir.exists():
             for config_file in vit_dir.glob('*.yaml'):
                 model_name = config_file.stem
-                if model_name != '__init__':  # Skip __init__.yaml
-                    models['vit'].append(model_name)
+                models['vit'].append(model_name)
         
         return models
     
@@ -123,69 +101,114 @@ class UnifiedExperimentRunner:
         """Create configuration for a single experiment.
         
         Args:
-            model_name: Name of the model to train
+            model_name: Name of the model (e.g., 'efficientnet_b0', 'vit_tiny')
             model_type: Type of model ('cnn' or 'vit')
             training_config: Training configuration to use
-            overrides: Dictionary of configuration overrides
+            overrides: Additional configuration overrides
             
         Returns:
-            Composed configuration
+            Complete configuration object
         """
         try:
-            # Clear any existing Hydra instance
+            # Ensure Hydra is clean
             GlobalHydra.instance().clear()
             
-            # Adjust training config for specific models
-            if model_name.startswith('swin') and training_config == 'standard':
-                # Check if swin_standard exists
-                swin_config_path = self.config_dir / 'training' / 'swin_standard.yaml'
-                if swin_config_path.exists():
-                    training_config = 'swin_standard'
-                    console.print("[cyan]Using Swin-optimized training configuration[/cyan]")
-                elif model_type == 'vit':
-                    # Fall back to vit_standard if it exists
-                    vit_config_path = self.config_dir / 'training' / 'vit_standard.yaml'
-                    if vit_config_path.exists():
-                        training_config = 'vit_standard'
-            elif model_type == 'vit' and training_config == 'standard':
-                # Check if vit_standard exists for other ViT models
-                vit_config_path = self.config_dir / 'training' / 'vit_standard.yaml'
-                if vit_config_path.exists():
-                    training_config = 'vit_standard'
-            
             # Initialize Hydra with config directory
-            with initialize_config_dir(config_dir=str(self.config_dir), version_base=None):
-                # Compose configuration
-                cfg = compose(
-                    config_name="config",  # Use the main config.yaml
-                    overrides=[
-                        f"model={model_type}/{model_name}",
-                        f"training={training_config}",
-                        "hydra.run.dir=outputs/${model.name}/${now:%Y-%m-%d_%H-%M-%S}",
-                        "hydra.job.chdir=false"
-                    ]
-                )
-                
-            # Convert to dict for manipulation
-            cfg_dict = OmegaConf.to_container(cfg, resolve=True)
+            initialize_config_dir(config_dir=str(self.config_dir), version_base=None)
             
-            # Apply Swin-specific adjustments
-            if model_name.startswith('swin'):
-                self._apply_swin_config(model_name, cfg_dict)
+            # Create config with overrides
+            config_overrides = [
+                f"model={model_type}/{model_name}",
+                f"training={training_config}"
+            ]
             
-            # Apply overrides
+            # Add any additional overrides
             if overrides:
                 for key, value in overrides.items():
-                    keys = key.split('.')
-                    target = cfg_dict
-                    for k in keys[:-1]:
-                        if k not in target:
-                            target[k] = {}
-                        target = target[k]
-                    target[keys[-1]] = value
+                    config_overrides.append(f"{key}={value}")
+            
+            # Compose configuration
+            cfg = compose(config_name="config", overrides=config_overrides)
+            
+            # Convert to container and resolve manually
+            cfg_dict = OmegaConf.to_container(cfg, resolve=False)
+            
+            # Get project root
+            project_root = self.config_dir.parent
+            
+            # Manually replace interpolations in the dictionary
+            def replace_interpolations(obj):
+                if isinstance(obj, dict):
+                    for key, value in obj.items():
+                        obj[key] = replace_interpolations(value)
+                elif isinstance(obj, list):
+                    return [replace_interpolations(item) for item in obj]
+                elif isinstance(obj, str):
+                    # Replace common Hydra interpolations
+                    if obj == "${hydra:runtime.cwd}/data":
+                        return str(project_root / "data")
+                    elif obj == "${hydra:runtime.cwd}/logs":
+                        return str(project_root / "logs")
+                    elif obj == "${hydra:runtime.cwd}/checkpoints":
+                        return str(project_root / "checkpoints")
+                    elif obj == "${paths.data_dir}/raw":
+                        return str(project_root / "data" / "raw")
+                    else:
+                        return obj
+                else:
+                    return obj
+                return obj
+            
+            # Apply replacements
+            cfg_dict = replace_interpolations(cfg_dict)
+            
+            # ViT-specific configuration handling
+            if model_type == 'vit':
+                # Set ViT-specific model target
+                cfg_dict['model']['_target_'] = 'src.models.vit.get_vit_model'
+                cfg_dict['model']['model_name'] = model_name
+                
+                # Use AdamW optimizer for ViT
+                cfg_dict['training']['optimizer']['_target_'] = 'torch.optim.AdamW'
+                
+                # ViT-specific training settings if not already overridden
+                if 'training' not in cfg_dict:
+                    cfg_dict['training'] = {}
+                    
+                # Use ViT-specific training config if available
+                if training_config == 'standard' and (self.config_dir / 'training' / 'vit_standard.yaml').exists():
+                    # Override with ViT-specific training
+                    config_overrides = [
+                        f"model={model_type}/{model_name}",
+                        "training=vit_standard"
+                    ]
+                    cfg = compose(config_name="config", overrides=config_overrides)
+                    cfg_dict = OmegaConf.to_container(cfg, resolve=False)
+                    cfg_dict = replace_interpolations(cfg_dict)
+                
+                # Layer-wise learning rate decay
+                if 'layer_decay' in cfg_dict.get('training', {}):
+                    cfg_dict['training']['layer_wise_lr_decay'] = True
+                    
+                # Ensure correct learning rate for ViT (typically lower)
+                if 'optimizer' in cfg_dict.get('training', {}):
+                    current_lr = cfg_dict['training']['optimizer'].get('lr', 0.001)
+                    if current_lr > 0.001:  # If using CNN LR, reduce it
+                        cfg_dict['training']['optimizer']['lr'] = 0.0005
+            
+            if model_type == 'vit' and 'deit' in model_name:
+                # Special handling for DeiT models
+                if cfg_dict['model'].get('pretrained', False):
+                    # Use lower learning rate for pretrained models
+                    cfg_dict['training']['optimizer']['lr'] = 0.0005
+                    
+                # Enable distillation if specified
+                if cfg_dict['model'].get('distilled', False):
+                    cfg_dict['training']['use_distillation'] = True
             
             # Convert back to OmegaConf and resolve any remaining interpolations
             cfg = OmegaConf.create(cfg_dict)
+            
             
             # Ensure directories exist
             Path(cfg.paths.data_dir).mkdir(parents=True, exist_ok=True)
@@ -202,231 +225,7 @@ class UnifiedExperimentRunner:
         finally:
             # Always clean up Hydra
             GlobalHydra.instance().clear()
-    
-    def _apply_swin_config(self, model_name: str, cfg_dict: dict):
-        """Apply Swin-specific configuration adjustments."""
-        # Check for Blackwell GPU optimizations
-        if torch.cuda.is_available():
-            gpu_memory = torch.cuda.get_device_properties(0).total_memory / 1e9
-            if gpu_memory > 80:  # Blackwell GPU detected
-                console.print("[green]Blackwell GPU detected! Applying optimizations.[/green]")
-                
-                # Apply Blackwell optimizations if defined in model config
-                if 'blackwell_optimizations' in cfg_dict.get('model', {}):
-                    blackwell_opts = cfg_dict['model']['blackwell_optimizations']
-                    
-                    if 'batch_size' in blackwell_opts:
-                        cfg_dict['training']['batch_size'] = blackwell_opts['batch_size']
-                        console.print(f"[cyan]Batch size set to {blackwell_opts['batch_size']}[/cyan]")
-                    
-                    if 'mixed_precision' in blackwell_opts:
-                        cfg_dict['trainer']['precision'] = (
-                            'bf16-mixed' if blackwell_opts['mixed_precision'] == 'bf16' else '16-mixed'
-                        )
-            
-            # Memory warning for Swin-Large
-            if model_name == 'swin_large' and gpu_memory < 40:
-                console.print("[yellow]⚠️  Warning: Swin-Large requires significant GPU memory![/yellow]")
-                console.print(f"[yellow]Available: {gpu_memory:.1f}GB, Recommended: 40GB+[/yellow]")
-    
-    def _execute_training(self, cfg: DictConfig) -> Dict:
-        """Execute the training for a single experiment.
-        
-        Args:
-            cfg: Experiment configuration
-            
-        Returns:
-            Training results
-        """
-        # Get device
-        device = get_device()
-        console.print(f"[cyan]Using device: {device}[/cyan]")
-        
-        # Create data loaders with proper transforms
-        console.print("[yellow]Creating data loaders...[/yellow]")
-        
-        # Get transforms
-        quality_report_path = Path(cfg.paths.data_dir).parent / 'reports' / 'quality_report.json'
-        
-        if cfg.model.get('quality_aware', True) and quality_report_path.exists():
-            console.print("[cyan]Using quality-aware preprocessing[/cyan]")
-            quality_path = quality_report_path
-        else:
-            console.print("[yellow]Quality-aware preprocessing disabled or report not found[/yellow]")
-            quality_path = None
-        
-        # Get augmentation level from config
-        augmentation_level = cfg.training.get('augmentation_level', 'medium')
-        
-        train_transform = create_quality_aware_transform(
-            target_size=cfg.dataset.image_size,
-            quality_report_path=quality_path,
-            augmentation_level=augmentation_level,
-            split='train'
-        )
-        
-        val_transform = create_quality_aware_transform(
-            target_size=cfg.dataset.image_size,
-            quality_report_path=quality_path,
-            augmentation_level='none',  # No augmentation for validation
-            split='val'
-        )
-        
-        # Create data loaders with proper parameters
-        data_loaders = create_data_loaders(
-            root_dir=cfg.dataset.path,  # Use the resolved path
-            batch_size=cfg.training.batch_size,
-            num_workers=cfg.dataset.num_workers,
-            transform_train=train_transform,
-            transform_val=val_transform,
-            target_size=cfg.dataset.image_size,
-            normalize=cfg.dataset.normalize,
-            patient_level_split=cfg.dataset.patient_level_split
-        )
-        
-        train_loader = data_loaders['train']
-        val_loader = data_loaders['val']
-        test_loader = data_loaders['test']
-        
-        # Determine model type from config
-        model_type = cfg.model.get('type', None)
-        model_name = cfg.model.name
-        
-        # Create appropriate model module
-        if model_type in ['vit', 'deit', 'swin'] or model_name.startswith(('vit_', 'deit_', 'swin_')):
-            if not VIT_AVAILABLE:
-                raise ImportError("Vision Transformer models are not available. Please check installation.")
-            
-            # Use Vision Transformer module
-            model_module = ThyroidViTModule(cfg)
-            
-            # Don't override model creation for Swin anymore!
-            # The ThyroidViTModule._create_model will handle it properly
-            # and pass the pretrained_cfg from the config
-            
-            console.print(f"[green]Created {model_type.upper()} model: {model_name}[/green]")
-        else:
-            # Use CNN module
-            model_module = ThyroidCNNModule(cfg)
-        
-        # Calculate total parameters
-        total_params = sum(p.numel() for p in model_module.parameters())
-        trainable_params = sum(p.numel() for p in model_module.parameters() if p.requires_grad)
-        console.print(f"[green]Model created: {cfg.model.name}[/green]")
-        console.print(f"  Total parameters: {total_params:,}")
-        console.print(f"  Trainable parameters: {trainable_params:,}")
-        
-        # Create callbacks
-        callbacks = []
-        
-        # Model checkpoint
-        checkpoint_callback = ModelCheckpoint(
-            dirpath=cfg.paths.checkpoint_dir,
-            filename=f"{cfg.model.name}-{{epoch:02d}}-{{val_acc:.4f}}",
-            monitor='val_acc',
-            mode='max',
-            save_top_k=3,
-            save_last=True,
-            verbose=True
-        )
-        callbacks.append(checkpoint_callback)
-        
-        # Early stopping
-        if cfg.training.get('early_stopping', None):
-            early_stop_callback = EarlyStopping(
-                monitor=cfg.training.early_stopping.monitor,
-                patience=cfg.training.early_stopping.patience,
-                mode=cfg.training.early_stopping.mode,
-                min_delta=cfg.training.early_stopping.min_delta,
-                verbose=True
-            )
-            callbacks.append(early_stop_callback)
-        
-        # Progress bar
-        progress_bar = RichProgressBar()
-        callbacks.append(progress_bar)
-        
-        # Learning rate monitor
-        lr_monitor = LearningRateMonitor(logging_interval='epoch')
-        callbacks.append(lr_monitor)
-        
-        # Setup logger
-        logger = None
-        if cfg.wandb.mode != 'disabled':
-            logger = WandbLogger(
-                mode=cfg.wandb.mode,
-                project=cfg.wandb.project,
-                entity=cfg.wandb.entity,
-                name=cfg.experiment_name,
-                tags=list(cfg.wandb.tags) if hasattr(cfg.wandb, 'tags') else [],
-                config=OmegaConf.to_container(cfg, resolve=True)
-            )
-        
-        # Setup trainer
-        trainer_config = OmegaConf.to_container(cfg.trainer, resolve=True)
-        
-        # Remove Hydra-specific keys
-        trainer_config.pop('_target_', None)
-        trainer_config.pop('callbacks', None)
-        trainer_config.pop('logger', None)
-        
-        # Handle device-specific settings
-        if device.type == 'mps':
-            trainer_config['accelerator'] = 'mps'
-            trainer_config['precision'] = 32  # MPS doesn't support mixed precision yet
-        elif device.type == 'cuda':
-            trainer_config['accelerator'] = 'gpu'
-            trainer_config['precision'] = cfg.training.get('precision', '16-mixed')
-        else:
-            trainer_config['accelerator'] = 'cpu'
-            trainer_config['precision'] = 32
-        
-        # Create trainer
-        trainer = pl.Trainer(
-            **trainer_config,
-            callbacks=callbacks,
-            logger=logger
-        )
-        
-        # Train
-        console.print("\n[cyan]Starting training...[/cyan]")
-        trainer.fit(
-            model_module,
-            train_dataloaders=train_loader,
-            val_dataloaders=val_loader
-        )
-        
-        # Test
-        test_results = {}
-        if not cfg.trainer.fast_dev_run and not cfg.trainer.get('limit_test_batches', 1.0) == 0:
-            console.print("\n[cyan]Running test evaluation...[/cyan]")
-            test_results = trainer.test(model_module, dataloaders=test_loader)[0]
-        
-        # Gather results
-        results = {
-            'model_name': cfg.model.name,
-            'total_params': total_params,
-            'trainable_params': trainable_params,
-        }
-        
-        # Add metrics if available
-        if hasattr(trainer, 'callback_metrics'):
-            metrics = trainer.callback_metrics
-            if 'val_acc' in metrics:
-                results['val_acc'] = float(metrics['val_acc'])
-            if 'train_acc' in metrics:
-                results['train_acc'] = float(metrics['train_acc'])
-        
-        # Add test results
-        if test_results:
-            if 'test_acc' in test_results:
-                results['test_acc'] = float(test_results['test_acc'])
-        
-        # Cleanup
-        if logger:
-            wandb.finish()
-        
-        return results
+
     
     def run_single_experiment(
         self,
@@ -477,6 +276,8 @@ class UnifiedExperimentRunner:
                 console.print(f"[red]Configuration error details:[/red]")
                 console.print("\n[red]Stack trace:[/red]")
                 console.print(traceback.format_exc())
+                console.print(f"[red]Configuration error details:[/red]")
+                console.print(traceback.format_exc())
                 raise ValueError(f"Configuration creation failed: {e}")
             
             # Run the experiment
@@ -493,22 +294,247 @@ class UnifiedExperimentRunner:
             })
             
             console.print(f"\n[green]✓ {model_name} completed successfully![/green]")
-            console.print(f"[green]  Test accuracy: {result['test_acc']:.4f}[/green]")
-            
-            return result
+            if 'test_acc' in result:
+                console.print(f"  Test Accuracy: {result['test_acc']:.4f}")
             
         except Exception as e:
-            console.print(f"\n[red]✗ Error running {model_name}: {e}[/red]")
-            console.print("\n[red]Stack trace:[/red]")
-            console.print(traceback.format_exc())
-            
-            return {
-                'status': 'error',
+            elapsed_time = time.time() - start_time
+            result = {
+                'status': 'failed',
                 'error': str(e),
-                'time_seconds': time.time() - start_time,
+                'time_seconds': elapsed_time,
                 'model_name': model_name,
                 'model_type': model_type
             }
+            console.print(f"\n[red]✗ {model_name} failed: {e}[/red]")
+            console.print("[red]Stack trace:[/red]")
+            console.print(traceback.format_exc())
+        
+        finally:
+            # Ensure Hydra is always cleaned up
+            try:
+                GlobalHydra.instance().clear()
+            except:
+                pass
+        
+        console.print("[dim]━" * 80 + "[/dim]\n")
+        return result
+    
+    def _execute_training(self, cfg: DictConfig) -> Dict:
+        """Execute the actual training process.
+        
+        Args:
+            cfg: Configuration object
+            
+        Returns:
+            Training results
+        """
+        # Determine model type from config
+        model_type = 'vit' if 'vit' in cfg.model.name else 'cnn'
+        
+        # Print configuration
+        console.print(Panel.fit(
+            f"[bold cyan]{model_type.upper()} Training: {cfg.model.name}[/bold cyan]\n"
+            f"[dim]Dataset: {cfg.dataset.name}[/dim]",
+            border_style="blue"
+        ))
+        
+        # Set seed for reproducibility
+        pl.seed_everything(cfg.seed, workers=True)
+        
+        # Device selection with MPS support
+        device = get_device(cfg.device)
+        console.print(f"\n[cyan]Device Information:[/cyan]")
+        console.print(device_info())
+        
+        # Create data loaders with quality-aware preprocessing
+        console.print("\n[cyan]Creating data loaders...[/cyan]")
+        
+        # Get transforms
+        quality_report_path = Path(cfg.paths.data_dir).parent / 'reports' / 'quality_report.json'
+        
+        if cfg.model.get('quality_aware', True) and quality_report_path.exists():
+            console.print("[cyan]Using quality-aware preprocessing[/cyan]")
+            quality_path = quality_report_path
+        else:
+            console.print("[yellow]Quality-aware preprocessing disabled or report not found[/yellow]")
+            quality_path = None
+        
+        # Get augmentation level from config
+        augmentation_level = cfg.training.get('augmentation_level', 'medium')
+        
+        # For ViT models, we might want stronger augmentation
+        if model_type == 'vit' and augmentation_level == 'medium':
+            augmentation_level = 'strong'
+            console.print("[cyan]Using strong augmentation for ViT model[/cyan]")
+        
+        train_transform = create_quality_aware_transform(
+            target_size=cfg.dataset.image_size,
+            quality_report_path=quality_path,
+            augmentation_level=augmentation_level,
+            split='train'
+        )
+        
+        val_transform = create_quality_aware_transform(
+            target_size=cfg.dataset.image_size,
+            quality_report_path=quality_path,
+            augmentation_level='none',  # No augmentation for validation
+            split='val'
+        )
+        
+        # Create data loaders
+        data_loaders = create_data_loaders(
+            root_dir=cfg.dataset.path,
+            batch_size=cfg.training.batch_size,
+            num_workers=cfg.dataset.num_workers,
+            transform_train=train_transform,
+            transform_val=val_transform,
+            target_size=cfg.dataset.image_size,
+            normalize=False,  # Normalization handled in transforms
+            patient_level_split=cfg.dataset.patient_level_split
+        )
+        
+        console.print(f"[green]✓ Data loaders created[/green]")
+        console.print(f"  Train samples: {len(data_loaders['train'].dataset)}")
+        console.print(f"  Val samples: {len(data_loaders['val'].dataset)}")
+        console.print(f"  Test samples: {len(data_loaders['test'].dataset)}")
+        
+        # Create model based on type
+        console.print("\n[cyan]Creating model...[/cyan]")
+        
+        # Determine model type
+        model_name = cfg.model.name
+        if model_name in ['vit_tiny', 'vit_small', 'vit_base',
+                        'deit_tiny', 'deit_small', 'deit_base',
+                        'swin_tiny', 'swin_small', 'swin_base']:
+            model = ThyroidViTModule(cfg)
+        else:
+            model = ThyroidCNNModule(cfg)
+        
+        # Print model info
+        total_params = sum(p.numel() for p in model.parameters())
+        trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        console.print(f"[green]✓ Model created[/green]")
+        console.print(f"  Total parameters: {total_params:,}")
+        console.print(f"  Trainable parameters: {trainable_params:,}")
+        console.print(f"  Model type: {model_type.upper()}")
+        
+        # Setup callbacks
+        callbacks = []
+        
+        # Model checkpoint
+        checkpoint_callback = ModelCheckpoint(
+            dirpath=cfg.paths.checkpoint_dir,
+            filename=f"{cfg.model.name}-{{epoch:02d}}-{{val_acc:.4f}}",
+            monitor='val_acc',
+            mode='max',
+            save_top_k=3,
+            save_last=True,
+            verbose=True
+        )
+        callbacks.append(checkpoint_callback)
+        
+        # Early stopping
+        if cfg.training.get('early_stopping', None):
+            early_stop_callback = EarlyStopping(
+                monitor='val_acc',
+                min_delta=cfg.training.early_stopping.min_delta,
+                patience=cfg.training.early_stopping.patience,
+                mode='max',
+                verbose=True
+            )
+            callbacks.append(early_stop_callback)
+        
+        # Rich progress bar
+        callbacks.append(RichProgressBar())
+        
+        # Learning rate monitor
+        callbacks.append(LearningRateMonitor(logging_interval='epoch'))
+        
+        # Best checkpoint callback
+        best_checkpoint_callback = BestCheckpointCallback(checkpoint_dir=Path(cfg.paths.checkpoint_dir))
+        callbacks.append(best_checkpoint_callback)
+        
+        # Setup logger
+        wandb_logger = None
+        if cfg.get('wandb', {}).get('mode', 'disabled') != 'disabled':
+            wandb_logger = WandbLogger(
+                project=cfg.wandb.project,
+                name=f"{cfg.model.name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+                config=OmegaConf.to_container(cfg, resolve=True),
+                save_dir=cfg.paths.log_dir,
+                mode=cfg.wandb.mode
+            )
+        
+        # Update trainer config for device
+        trainer_config = OmegaConf.to_container(cfg.trainer, resolve=True)
+        
+        # Remove Hydra-specific keys and those we'll pass separately
+        trainer_config.pop('_target_', None)
+        trainer_config.pop('callbacks', None)
+        trainer_config.pop('logger', None)
+        
+        # Remove deprecated PyTorch Lightning parameters
+        deprecated_params = [
+            'progress_bar_refresh_rate',  # Deprecated in PL 2.0+
+            'weights_summary',  # Deprecated, use enable_model_summary
+            'resume_from_checkpoint',  # Deprecated, use ckpt_path
+            'truncated_bptt_steps',  # Deprecated
+            'weights_save_path',  # Deprecated
+        ]
+        
+        for param in deprecated_params:
+            trainer_config.pop(param, None)
+        
+        # Handle device-specific settings
+        if device.type == 'mps':
+            trainer_config['accelerator'] = 'mps'
+            trainer_config['precision'] = 32  # MPS doesn't support mixed precision yet
+        elif device.type == 'cuda':
+            trainer_config['accelerator'] = 'gpu'
+            trainer_config['precision'] = '16-mixed' if cfg.training.get('precision', '16-mixed') == '16-mixed' else 32
+        else:
+            trainer_config['accelerator'] = 'cpu'
+            trainer_config['precision'] = 32
+            
+        # Create trainer
+        trainer = pl.Trainer(
+            **trainer_config,
+            callbacks=callbacks,
+            logger=wandb_logger
+        )
+        
+        # Train
+        console.print("\n[cyan]Starting training...[/cyan]")
+        trainer.fit(
+            model,
+            train_dataloaders=data_loaders['train'],
+            val_dataloaders=data_loaders['val']
+        )
+        
+        # Test
+        console.print("\n[cyan]Running test evaluation...[/cyan]")
+        test_results = trainer.test(
+            model,
+            dataloaders=data_loaders['test'],
+            ckpt_path='best'
+        )
+        
+        # Extract results
+        result = {
+            'train_acc': float(trainer.callback_metrics.get('train_acc', 0)),
+            'val_acc': float(trainer.callback_metrics.get('val_acc', 0)),
+            'test_acc': float(test_results[0].get('test_acc', 0)),
+            'best_epoch': checkpoint_callback.best_model_score.item() if hasattr(checkpoint_callback, 'best_model_score') else 0,
+            'total_epochs': trainer.current_epoch + 1,
+        }
+        
+        # Clean up
+        if wandb_logger:
+            wandb.finish()
+        
+        return result
+
     
     def run_model_sweep(
         self,
@@ -710,52 +736,63 @@ def main():
             console.print("[red]No ViT models found![/red]")
             sys.exit(1)
         
+        # Use ViT-specific training config if available
+        training_config = 'vit_standard' if (config_dir / 'training' / 'vit_standard.yaml').exists() else args.training_config
+        
         results = runner.run_model_sweep(
             models=vit_models,
             model_type='vit',
-            training_config=args.training_config,
+            training_config=training_config,
             overrides=overrides,
             quick_test=args.quick_test
         )
         
     elif args.mode == 'sweep':
         # Custom model sweep
-        if not args.models:
-            console.print("[red]Please specify models with --models for sweep mode[/red]")
-            sys.exit(1)
-        
-        # Determine model type from first model
-        if args.models[0] in available_models['vit']:
-            model_type = 'vit'
+        if args.models:
+            # Determine model types
+            for model in args.models:
+                if model in available_models['vit']:
+                    model_type = 'vit'
+                elif model in available_models['cnn']:
+                    model_type = 'cnn'
+                else:
+                    console.print(f"[yellow]Warning: Unknown model {model}, skipping[/yellow]")
+                    continue
+                
+                result = runner.run_single_experiment(
+                    model_name=model,
+                    model_type=model_type,
+                    training_config=args.training_config,
+                    overrides=overrides,
+                    quick_test=args.quick_test
+                )
+                results[model] = result
         else:
-            model_type = 'cnn'
-        
-        results = runner.run_model_sweep(
-            models=args.models,
-            model_type=model_type,
-            training_config=args.training_config,
-            overrides=overrides,
-            quick_test=args.quick_test
-        )
+            console.print("[red]No models specified for sweep mode![/red]")
+            sys.exit(1)
         
     elif args.mode == 'efficientnet':
         # EfficientNet sweep
-        efficientnet_models = [m for m in available_models['cnn'] if m.startswith('efficientnet')]
+        efficientnet_models = [m for m in available_models['cnn'] if 'efficientnet' in m]
         if not efficientnet_models:
             console.print("[red]No EfficientNet models found![/red]")
             sys.exit(1)
         
+        # Use EfficientNet-specific training config
+        training_config = 'efficientnet' if args.training_config == 'standard' else args.training_config
+        
         results = runner.run_model_sweep(
             models=efficientnet_models,
             model_type='cnn',
-            training_config=args.training_config,
+            training_config=training_config,
             overrides=overrides,
             quick_test=args.quick_test
         )
         
     elif args.mode == 'resnet':
         # ResNet sweep
-        resnet_models = [m for m in available_models['cnn'] if m.startswith('resnet')]
+        resnet_models = [m for m in available_models['cnn'] if 'resnet' in m]
         if not resnet_models:
             console.print("[red]No ResNet models found![/red]")
             sys.exit(1)
@@ -793,11 +830,6 @@ def main():
         # Compare with baseline
         if best_model[1].get('test_acc', 0) > 0.853:  # Better than ResNet18 baseline
             console.print("[green]• Model outperforms ResNet18 baseline (85.3%)![/green]")
-        
-        # Check for Swin models
-        if best_model[0].startswith('swin'):
-            console.print("• Swin Transformer shows promising results!")
-            console.print("• Consider ensemble with CNN models for best performance")
     
     console.print("• Consider ensemble of top performing models")
     console.print("• Test with different augmentation levels")

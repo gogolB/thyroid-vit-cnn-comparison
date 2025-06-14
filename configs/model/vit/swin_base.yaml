@@ -35,7 +35,7 @@ params:
 # Pretrained weights configuration
 pretrained: true
 pretrained_cfg:
-  url: "microsoft/swin-base-patch4-window7-224"
+  url: "microsoft/swin_base_patch4_window7_224"
   num_classes: 1000
   input_size: [3, 224, 224]
 

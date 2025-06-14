@@ -697,11 +697,15 @@ from typing import Dict, Any, Optional
 def load_pretrained_swin_from_timm(
     model_name: str,
     pretrained_cfg: Dict[str, Any],
-    in_chans: int = 1,
-    num_classes: int = 2,
     **kwargs
-) -> nn.Module:
-    """Load a pretrained Swin model from timm and adapt it."""
+) -> Optional[nn.Module]:
+    """Load pretrained Swin model from timm library with size adaptation"""
+    import timm
+    
+    # Get model parameters
+    num_classes = kwargs.get('num_classes', 2)
+    in_chans = kwargs.get('in_chans', 1)
+    img_size = kwargs.get('img_size', 256)
     
     # Get timm model name from pretrained_cfg or use default mapping
     timm_model_map = {
@@ -709,34 +713,71 @@ def load_pretrained_swin_from_timm(
         'swin_small': 'swin_small_patch4_window7_224', 
         'swin_base': 'swin_base_patch4_window7_224',
         'swin_large': 'swin_large_patch4_window12_384',
-        'swin_medical': 'swin_small_patch4_window7_224',  # Use small as base for medical
+        'swin_medical': 'swin_small_patch4_window7_224',
     }
     
-    # Use URL from config if it's a valid timm model name
     timm_model_name = pretrained_cfg.get('url', timm_model_map.get(model_name, model_name))
+    timm_model_name = timm_model_name.replace('-', '_')
     
-    # Remove 'microsoft/' prefix if present
     if timm_model_name.startswith('microsoft/'):
         timm_model_name = timm_model_name.replace('microsoft/', '')
     
     print(f"Loading pretrained weights from timm: {timm_model_name}")
     
     try:
-        # Create the pretrained model
+        # First create model with original size to load weights properly
         model = timm.create_model(
             timm_model_name,
             pretrained=True,
-            num_classes=num_classes,
+            num_classes=0,  # Remove classifier first
             in_chans=3  # Load with RGB weights initially
         )
         
+        # Now update for our target size
+        if img_size != 224:
+            print(f"Adapting model from 224x224 to {img_size}x{img_size}")
+            
+            # Update patch embedding for new size
+            if hasattr(model, 'patch_embed'):
+                patch_size = model.patch_embed.patch_size[0]
+                new_grid_size = img_size // patch_size
+                
+                model.patch_embed.img_size = (img_size, img_size)
+                model.patch_embed.grid_size = (new_grid_size, new_grid_size)
+                model.patch_embed.num_patches = new_grid_size * new_grid_size
+                
+                # Update absolute position embeddings if they exist
+                if hasattr(model, 'absolute_pos_embed') and model.absolute_pos_embed is not None:
+                    old_pos_embed = model.absolute_pos_embed
+                    old_grid_size = int(old_pos_embed.shape[1] ** 0.5)
+                    
+                    if old_grid_size != new_grid_size:
+                        print(f"Interpolating position embeddings from {old_grid_size}x{old_grid_size} to {new_grid_size}x{new_grid_size}")
+                        
+                        # Interpolate position embeddings
+                        pos_embed = old_pos_embed.reshape(1, old_grid_size, old_grid_size, -1).permute(0, 3, 1, 2)
+                        pos_embed = F.interpolate(
+                            pos_embed,
+                            size=(new_grid_size, new_grid_size),
+                            mode='bicubic',
+                            align_corners=False
+                        )
+                        pos_embed = pos_embed.permute(0, 2, 3, 1).reshape(1, -1, old_pos_embed.shape[-1])
+                        model.absolute_pos_embed = nn.Parameter(pos_embed)
+        
+        # Add new classifier for our number of classes
+        if hasattr(model, 'head'):
+            in_features = model.head.in_features if hasattr(model.head, 'in_features') else model.num_features
+        else:
+            in_features = model.num_features
+            
+        model.head = nn.Linear(in_features, num_classes)
+        
         # Adapt for grayscale input if needed
         if in_chans == 1:
-            # Get the patch embedding layer
             patch_embed = model.patch_embed
             old_proj = patch_embed.proj
             
-            # Create new conv layer for grayscale
             new_proj = nn.Conv2d(
                 1, old_proj.out_channels,
                 kernel_size=old_proj.kernel_size,
@@ -744,25 +785,25 @@ def load_pretrained_swin_from_timm(
                 padding=old_proj.padding
             )
             
-            # Average RGB weights to grayscale
             with torch.no_grad():
+                # Average RGB weights to grayscale
                 new_proj.weight.data = old_proj.weight.data.mean(dim=1, keepdim=True)
                 if old_proj.bias is not None:
                     new_proj.bias.data = old_proj.bias.data
             
-            # Replace the projection layer
             patch_embed.proj = new_proj
             model.patch_embed = patch_embed
             
             print(f"Adapted model for grayscale input (in_chans={in_chans})")
         
-        # Update any additional parameters that might be in kwargs
+        # Update any additional parameters
         if 'drop_rate' in kwargs:
             model.drop_rate = kwargs['drop_rate']
         if 'drop_path_rate' in kwargs:
             model.drop_path_rate = kwargs['drop_path_rate']
             
-        print(f"Successfully loaded pretrained {model_name} with {sum(p.numel() for p in model.parameters()):,} parameters")
+        print(f"Successfully loaded pretrained {model_name} for {img_size}x{img_size} images")
+        print(f"Model parameters: {sum(p.numel() for p in model.parameters()):,}")
         
         return model
         

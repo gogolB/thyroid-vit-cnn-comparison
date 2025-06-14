@@ -12,6 +12,7 @@ import matplotlib.gridspec as gridspec
 from matplotlib.patches import Rectangle
 import cv2
 from tqdm import tqdm
+import torch
 
 # Add project root to path
 sys.path.append(str(Path(__file__).parent.parent))
@@ -85,21 +86,16 @@ def create_feature_comparison(dataset, save_path=None):
     """Create a detailed comparison showing key visual differences."""
     fig, axes = plt.subplots(2, 3, figsize=(15, 10))
     
-    # Get one good example from each class
+    # Get one sample from each class
     normal_idx = None
     cancer_idx = None
     
-    # Find high-quality examples
     for idx in range(len(dataset)):
-        img = dataset._load_image(idx)
         label = dataset.labels[dataset.indices[idx]]
-        
-        # Check if image has good contrast
-        if np.std(img) > 100 and np.std(img) < 500:
-            if label == 0 and normal_idx is None:
-                normal_idx = idx
-            elif label == 1 and cancer_idx is None:
-                cancer_idx = idx
+        if label == 0 and normal_idx is None:
+            normal_idx = idx
+        elif label == 1 and cancer_idx is None:
+            cancer_idx = idx
         
         if normal_idx is not None and cancer_idx is not None:
             break
@@ -109,41 +105,34 @@ def create_feature_comparison(dataset, save_path=None):
     cancer_img = dataset._load_image(cancer_idx)
     
     # Original images
-    axes[0, 0].imshow(normal_img, cmap='gray')
+    axes[0, 0].imshow(normal_img, cmap='gray', vmin=0, vmax=65535)
     axes[0, 0].set_title('Normal Tissue', fontsize=14, color='green', fontweight='bold')
     axes[0, 0].axis('off')
     
-    axes[1, 0].imshow(cancer_img, cmap='gray')
+    axes[1, 0].imshow(cancer_img, cmap='gray', vmin=0, vmax=65535)
     axes[1, 0].set_title('Cancerous Tissue', fontsize=14, color='red', fontweight='bold')
     axes[1, 0].axis('off')
     
-    # Zoomed regions (center crop)
-    h, w = normal_img.shape
-    crop_size = 128
-    y, x = h//2 - crop_size//2, w//2 - crop_size//2
+    # Zoomed regions
+    zoom_size = 128
+    center = normal_img.shape[0] // 2
     
-    normal_crop = normal_img[y:y+crop_size, x:x+crop_size]
-    cancer_crop = cancer_img[y:y+crop_size, x:x+crop_size]
+    normal_zoom = normal_img[center-zoom_size//2:center+zoom_size//2,
+                            center-zoom_size//2:center+zoom_size//2]
+    cancer_zoom = cancer_img[center-zoom_size//2:center+zoom_size//2,
+                            center-zoom_size//2:center+zoom_size//2]
     
-    axes[0, 1].imshow(normal_crop, cmap='gray')
+    axes[0, 1].imshow(normal_zoom, cmap='gray', vmin=0, vmax=65535)
     axes[0, 1].set_title('Zoomed Region', fontsize=12)
     axes[0, 1].axis('off')
     
-    axes[1, 1].imshow(cancer_crop, cmap='gray')
+    axes[1, 1].imshow(cancer_zoom, cmap='gray', vmin=0, vmax=65535)
     axes[1, 1].set_title('Zoomed Region', fontsize=12)
     axes[1, 1].axis('off')
     
-    # Add rectangles to show zoom area
-    rect = Rectangle((x, y), crop_size, crop_size, linewidth=2, 
-                     edgecolor='yellow', facecolor='none')
-    axes[0, 0].add_patch(rect)
-    rect2 = Rectangle((x, y), crop_size, crop_size, linewidth=2, 
-                      edgecolor='yellow', facecolor='none')
-    axes[1, 0].add_patch(rect2)
-    
-    # Edge detection to show structure
-    normal_edges = cv2.Canny(normal_crop.astype(np.uint8), 50, 150)
-    cancer_edges = cv2.Canny(cancer_crop.astype(np.uint8), 50, 150)
+    # Edge detection
+    normal_edges = cv2.Canny((normal_img / 256).astype(np.uint8), 50, 150)
+    cancer_edges = cv2.Canny((cancer_img / 256).astype(np.uint8), 50, 150)
     
     axes[0, 2].imshow(normal_edges, cmap='hot')
     axes[0, 2].set_title('Tissue Structure', fontsize=12)
@@ -321,23 +310,47 @@ def main():
     
     console.print("[bold cyan]Generating Sample CARS Images for Presentation[/bold cyan]\n")
     
-    # Load dataset
+    # Import quality-aware preprocessing
+    from src.data.quality_preprocessing import create_quality_aware_transform
+    
+    # Create transform for visualization
+    transform = create_quality_aware_transform(
+        target_size=224,  # Use the actual model input size
+        quality_report_path=None,
+        augmentation_level='none',
+        split='val'
+    )
+    
+    # Load dataset with quality-aware preprocessing
     dataset = CARSThyroidDataset(
         root_dir='data/raw',
         split='test',  # Use test set for visualization
-        target_size=512,  # Keep original size for visualization
-        normalize=False,  # Keep original intensity values
+        target_size=224,  # Model input size
+        transform=transform,  # Apply quality-aware preprocessing
+        normalize=False,  # Keep values in original range for better visualization
         patient_level_split=False
     )
     
-    console.print(f"[green]Loaded dataset with {len(dataset)} images[/green]\n")
+    # Also create a raw dataset for comparison
+    dataset_raw = CARSThyroidDataset(
+        root_dir='data/raw',
+        split='test',
+        target_size=512,  # Keep original size
+        transform=None,
+        normalize=False,
+        patient_level_split=False
+    )
+    
+    console.print(f"[green]Loaded dataset with {len(dataset)} images[/green]")
+    console.print(f"[cyan]Using quality-aware preprocessing for visualization[/cyan]\n")
     
     # Generate visualizations
     visualizations = [
-        ('sample_grid.png', lambda: create_sample_grid(dataset, n_samples=6)),
-        ('feature_comparison.png', lambda: create_feature_comparison(dataset)),
-        ('intensity_distribution.png', lambda: create_intensity_distribution_plot(dataset)),
-        ('dataset_overview.png', lambda: create_dataset_overview())
+        ('sample_grid.png', lambda save_path: create_sample_grid(dataset_raw, n_samples=6, save_path=save_path)),
+        ('preprocessed_comparison.png', lambda save_path: create_preprocessing_comparison(dataset_raw, dataset, save_path=save_path)),
+        ('feature_comparison.png', lambda save_path: create_feature_comparison(dataset_raw, save_path=save_path)),
+        ('intensity_distribution.png', lambda save_path: create_intensity_distribution_plot(dataset_raw, save_path=save_path)),
+        ('dataset_overview.png', lambda save_path: create_dataset_overview(save_path=save_path))
     ]
     
     for filename, func in visualizations:
@@ -346,6 +359,54 @@ def main():
     
     console.print("\n[bold green]✓ All sample visualizations generated successfully![/bold green]")
     console.print(f"[cyan]Results saved to: {output_dir}[/cyan]")
+
+
+def create_preprocessing_comparison(dataset_raw, dataset_processed, save_path=None):
+    """Compare raw vs preprocessed images."""
+    fig, axes = plt.subplots(2, 4, figsize=(16, 8))
+    
+    # Get 4 samples
+    indices = np.random.choice(len(dataset_raw), 4, replace=False)
+    
+    for i, idx in enumerate(indices):
+        # Raw image
+        raw_img = dataset_raw._load_image(idx)
+        
+        # Processed image
+        processed_img, _ = dataset_processed[idx]
+        if isinstance(processed_img, torch.Tensor):
+            processed_img = processed_img.squeeze().numpy()
+        
+        # Display raw
+        axes[0, i].imshow(raw_img, cmap='gray', vmin=0, vmax=65535)
+        axes[0, i].set_title(f'Raw Image {i+1}', fontsize=11)
+        axes[0, i].axis('off')
+        
+        # Display processed with proper contrast
+        if processed_img.max() <= 1:
+            # Apply contrast adjustment
+            p2, p98 = np.percentile(processed_img, (2, 98))
+            processed_display = np.clip((processed_img - p2) / (p98 - p2), 0, 1)
+        else:
+            processed_display = processed_img
+            
+        axes[1, i].imshow(processed_display, cmap='gray')
+        axes[1, i].set_title(f'Quality-Aware Preprocessed {i+1}', fontsize=11)
+        axes[1, i].axis('off')
+    
+    plt.suptitle('Raw vs Quality-Aware Preprocessing Comparison', fontsize=14, fontweight='bold')
+    
+    # Add text explaining preprocessing
+    fig.text(0.5, 0.02, 'Quality-aware preprocessing: CLAHE enhancement, adaptive denoising, and normalization',
+             ha='center', fontsize=10, style='italic')
+    
+    plt.tight_layout()
+    
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight', facecolor='white')
+        console.print(f"[green]✓ Saved preprocessing comparison to {save_path}[/green]")
+    
+    plt.close()
 
 
 if __name__ == "__main__":

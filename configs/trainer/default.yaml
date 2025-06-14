@@ -1,5 +1,5 @@
 # configs/trainer/default.yaml
-_target_: pytorch_lightning.Trainer
+#_target_: pytorch_lightning.Trainer
 
 # Hardware acceleration
 accelerator: auto

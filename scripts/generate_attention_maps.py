@@ -363,16 +363,20 @@ def main():
             target_size=224, quality_report_path=quality_report_path, split='val'
         )
         dataset = CARSThyroidDataset(
-            root_dir=data_dir, split='val', transform=transform, target_size=224
+            root_dir=data_dir, split='test', transform=transform, target_size=224
         )
         raw_dataset = CARSThyroidDataset(
-            root_dir=data_dir, split='val', transform=None, target_size=224
+            root_dir=data_dir, split='test', transform=None, target_size=224
         )
         
         sample_indices = [i for i, label in enumerate(dataset.labels) if label == 0][:1] + \
                          [i for i, label in enumerate(dataset.labels) if label == 1][:1]
+                         
+        for i in sample_indices:
+            if i >= len(dataset):
+                sample_indices.remove(i)
 
-        samples = [(raw_dataset._load_image(i), dataset[i][0].unsqueeze(0), dataset[i][1]) for i in sample_indices]
+        samples = [(dataset._load_image(i), dataset[i][0].unsqueeze(0), dataset[i][1]) for i in sample_indices]
 
     except (ImportError, FileNotFoundError) as e:
         console.print(f"[yellow]Warning: Could not load dataset ({e}). Using dummy data.[/yellow]")
@@ -416,7 +420,7 @@ def main():
 def load_swin_model(checkpoint_path, device='cpu'):
     """Loads a Swin model from a checkpoint file."""
     try:
-        checkpoint = torch.load(checkpoint_path, map_location=device)
+        checkpoint = torch.load(checkpoint_path, map_location=device,  weights_only=False)
         model_file = Path(checkpoint_path).stem.lower()
         
         if 'tiny' in model_file: model_name = 'swin_tiny_patch4_window7_224'
@@ -440,5 +444,3 @@ def load_swin_model(checkpoint_path, device='cpu'):
 
 if __name__ == "__main__":
     main()
-Use code with caution.
-Python

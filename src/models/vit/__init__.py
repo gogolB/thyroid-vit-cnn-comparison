@@ -1,111 +1,85 @@
+
 """
-Vision Transformer models for thyroid classification.
-Phase 3 implementation supporting ViT, DeiT, and Swin transformers.
+Vision Transformer models package.
 """
 
-from typing import Dict, Any, Optional
-import torch.nn as nn
+# Import ViT and DeiT models
+try:
+    from .vit_models import create_vit_tiny, create_vit_small, create_vit_base
+    VIT_MODELS_AVAILABLE = True
+except ImportError:
+    VIT_MODELS_AVAILABLE = False
 
-# Model registry for easy access
-VIT_MODEL_REGISTRY = {
-    # ViT models (from scratch)
-    'vit_tiny': {
-        'config': 'configs/model/vit/vit_tiny.yaml',
-        'expected_params': 5.7e6,
-        'description': 'Vision Transformer Tiny (from scratch)'
-    },
-    'vit_small': {
-        'config': 'configs/model/vit/vit_small.yaml',
-        'expected_params': 22e6,
-        'description': 'Vision Transformer Small (from scratch)'
-    },
-    'vit_base': {
-        'config': 'configs/model/vit/vit_base.yaml',
-        'expected_params': 86e6,
-        'description': 'Vision Transformer Base (from scratch)'
-    },
-    
-    # DeiT models (pretrained available)
-    'deit_tiny': {
-        'config': 'configs/model/vit/deit_tiny.yaml',
-        'expected_params': 5.7e6,
-        'description': 'Data-Efficient Image Transformer Tiny'
-    },
-    'deit_small': {
-        'config': 'configs/model/vit/deit_small.yaml',
-        'expected_params': 22e6,
-        'description': 'Data-Efficient Image Transformer Small'
-    },
-    'deit_base': {
-        'config': 'configs/model/vit/deit_base.yaml',
-        'expected_params': 86e6,
-        'description': 'Data-Efficient Image Transformer Base'
-    },
-    
-    # Swin models (Week 3)
-    'swin_tiny': {
-        'config': 'configs/model/vit/swin_tiny.yaml',
-        'expected_params': 28e6,
-        'description': 'Swin Transformer Tiny'
-    },
-    'swin_small': {
-        'config': 'configs/model/vit/swin_small.yaml',
-        'expected_params': 50e6,
-        'description': 'Swin Transformer Small'
-    },
-}
+try:
+    from .deit_models import create_deit_tiny, create_deit_small, create_deit_base
+    DEIT_MODELS_AVAILABLE = True
+except ImportError:
+    DEIT_MODELS_AVAILABLE = False
+
+# Import Swin models
+try:
+    from .swin_transformer import (
+        create_swin_tiny, create_swin_small, create_swin_base,
+        create_swin_large, create_swin_medical
+    )
+    SWIN_MODELS_AVAILABLE = True
+except ImportError:
+    SWIN_MODELS_AVAILABLE = False
+
+# Model registry
+VIT_MODEL_REGISTRY = {}
+
+if VIT_MODELS_AVAILABLE:
+    VIT_MODEL_REGISTRY.update({
+        'vit_tiny': create_vit_tiny,
+        'vit_small': create_vit_small,
+        'vit_base': create_vit_base,
+    })
+
+if DEIT_MODELS_AVAILABLE:
+    VIT_MODEL_REGISTRY.update({
+        'deit_tiny': create_deit_tiny,
+        'deit_small': create_deit_small,
+        'deit_base': create_deit_base,
+    })
+
+if SWIN_MODELS_AVAILABLE:
+    VIT_MODEL_REGISTRY.update({
+        'swin_tiny': create_swin_tiny,
+        'swin_small': create_swin_small,
+        'swin_base': create_swin_base,
+        'swin_large': create_swin_large,
+        'swin_medical': create_swin_medical,
+    })
 
 
-def get_vit_model(model_name: str, **kwargs) -> nn.Module:
-    """
-    Factory function to create ViT models.
+def get_vit_model(model_name: str, **kwargs):
+    """Get a Vision Transformer model by name.
     
     Args:
-        model_name: Name of the model from VIT_MODEL_REGISTRY
-        **kwargs: Additional arguments to pass to model constructor
+        model_name: Name of the model (e.g., 'vit_tiny', 'deit_small', 'swin_base')
+        **kwargs: Additional arguments for model creation
         
     Returns:
-        Instantiated model
+        Model instance
         
     Raises:
-        ValueError: If model_name not found
+        ValueError: If model name is not recognized
     """
     if model_name not in VIT_MODEL_REGISTRY:
+        available = list(VIT_MODEL_REGISTRY.keys())
         raise ValueError(
-            f"Model {model_name} not found. "
-            f"Available models: {list(VIT_MODEL_REGISTRY.keys())}"
+            f"Unknown Vision Transformer model: {model_name}. "
+            f"Available models: {', '.join(available)}"
         )
     
-    # Import model classes (will be implemented in subsequent files)
-    if model_name.startswith('vit_'):
-        from .vit_models import create_vit_model
-        return create_vit_model(model_name, **kwargs)
-    elif model_name.startswith('deit_'):
-        from .deit_models import create_deit_model
-        return create_deit_model(model_name, **kwargs)
-    elif model_name.startswith('swin_'):
-        from .swin_transformer import create_swin_model
-        return create_swin_model(model_name, **kwargs)
-    else:
-        raise ValueError(f"Unknown model type for {model_name}")
+    return VIT_MODEL_REGISTRY[model_name](**kwargs)
 
 
-def list_available_models() -> Dict[str, str]:
-    """
-    Get a list of available ViT models with descriptions.
-    
-    Returns:
-        Dictionary mapping model names to descriptions
-    """
-    return {
-        name: info['description'] 
-        for name, info in VIT_MODEL_REGISTRY.items()
-    }
-
-
-# For backward compatibility and easy imports
 __all__ = [
-    'VIT_MODEL_REGISTRY',
     'get_vit_model',
-    'list_available_models',
+    'VIT_MODEL_REGISTRY',
+    'VIT_MODELS_AVAILABLE',
+    'DEIT_MODELS_AVAILABLE', 
+    'SWIN_MODELS_AVAILABLE',
 ]

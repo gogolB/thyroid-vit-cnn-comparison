@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Unified Experiment Runner for CARS Thyroid Classification
-Supports CNN models (ResNet, EfficientNet, DenseNet, Inception) and
-Vision Transformers (ViT, DeiT, Swin)
+Runs all CNN and Vision Transformer experiments directly without subprocesses
+Supports ResNet, EfficientNet, DenseNet, Inception, ViT, DeiT, and Swin models
 """
 
 import os
@@ -39,10 +39,16 @@ from src.data.quality_preprocessing import create_quality_aware_transform
 from src.utils.device import get_device, device_info
 from src.training.train_cnn import ThyroidCNNModule
 from src.utils.checkpoint_utils import BestCheckpointCallback
-from src.models.vit import get_vit_model
-from src.training.train_vit import ThyroidViTModule
 
-# Import Swin models (new addition)
+# Import ViT models if available
+try:
+    from src.models.vit import get_vit_model
+    from src.training.train_vit import ThyroidViTModule
+    VIT_AVAILABLE = True
+except ImportError:
+    VIT_AVAILABLE = False
+
+# Import Swin models if available
 try:
     from src.models.vit.swin_transformer import (
         create_swin_tiny, create_swin_small, create_swin_base, 
@@ -51,14 +57,12 @@ try:
     SWIN_AVAILABLE = True
 except ImportError:
     SWIN_AVAILABLE = False
-    console = Console()
-    console.print("[yellow]Warning: Swin Transformer models not available[/yellow]")
 
 console = Console()
 
 
 class UnifiedExperimentRunner:
-    """Unified experiment runner for all models."""
+    """Unified experiment runner for all CNN and Vision Transformer models."""
     
     def __init__(self, config_dir: Path):
         """Initialize the experiment runner.
@@ -78,25 +82,11 @@ class UnifiedExperimentRunner:
             border_style="blue"
         ))
         
-        # Detect hardware capabilities
-        self._detect_hardware()
-    
-    def _detect_hardware(self):
-        """Detect hardware capabilities for optimization."""
-        self.hardware = {
-            'device': get_device(),
-            'gpu_memory_gb': 0,
-            'is_blackwell': False
-        }
-        
-        if torch.cuda.is_available():
-            gpu_props = torch.cuda.get_device_properties(0)
-            self.hardware['gpu_memory_gb'] = gpu_props.total_memory / 1e9
-            self.hardware['gpu_name'] = gpu_props.name
-            # Detect Blackwell GPU (96GB VRAM)
-            if self.hardware['gpu_memory_gb'] > 80:
-                self.hardware['is_blackwell'] = True
-                console.print("[green]🚀 Blackwell GPU detected! Advanced features enabled.[/green]")
+        # Detect available features
+        if not VIT_AVAILABLE:
+            console.print("[yellow]Warning: Vision Transformer models not available[/yellow]")
+        if not SWIN_AVAILABLE and VIT_AVAILABLE:
+            console.print("[yellow]Warning: Swin Transformer models not available[/yellow]")
     
     def get_available_models(self) -> Dict[str, List[str]]:
         """Get available model configurations."""
@@ -110,21 +100,16 @@ class UnifiedExperimentRunner:
         if cnn_dir.exists():
             for config_file in cnn_dir.glob('*.yaml'):
                 model_name = config_file.stem
-                models['cnn'].append(model_name)
+                if model_name != '__init__':  # Skip __init__.yaml
+                    models['cnn'].append(model_name)
         
-        # Scan ViT models (including Swin)
+        # Scan ViT models
         vit_dir = self.config_dir / 'model' / 'vit'
         if vit_dir.exists():
             for config_file in vit_dir.glob('*.yaml'):
                 model_name = config_file.stem
-                models['vit'].append(model_name)
-        
-        # Add Swin models if available and configs exist
-        if SWIN_AVAILABLE:
-            swin_models = ['swin_tiny', 'swin_small', 'swin_base', 'swin_large', 'swin_medical']
-            for model in swin_models:
-                if (vit_dir / f"{model}.yaml").exists() and model not in models['vit']:
-                    models['vit'].append(model)
+                if model_name != '__init__':  # Skip __init__.yaml
+                    models['vit'].append(model_name)
         
         return models
     
@@ -150,7 +135,7 @@ class UnifiedExperimentRunner:
             # Clear any existing Hydra instance
             GlobalHydra.instance().clear()
             
-            # Adjust training config for Swin models
+            # Adjust training config for specific models
             if model_name.startswith('swin') and training_config == 'standard':
                 # Check if swin_standard exists
                 swin_config_path = self.config_dir / 'training' / 'swin_standard.yaml'
@@ -162,12 +147,17 @@ class UnifiedExperimentRunner:
                     vit_config_path = self.config_dir / 'training' / 'vit_standard.yaml'
                     if vit_config_path.exists():
                         training_config = 'vit_standard'
+            elif model_type == 'vit' and training_config == 'standard':
+                # Check if vit_standard exists for other ViT models
+                vit_config_path = self.config_dir / 'training' / 'vit_standard.yaml'
+                if vit_config_path.exists():
+                    training_config = 'vit_standard'
             
             # Initialize Hydra with config directory
             with initialize_config_dir(config_dir=str(self.config_dir), version_base=None):
                 # Compose configuration
                 cfg = compose(
-                    config_name="train",
+                    config_name="config",  # Use the main config.yaml
                     overrides=[
                         f"model={model_type}/{model_name}",
                         f"training={training_config}",
@@ -179,8 +169,9 @@ class UnifiedExperimentRunner:
             # Convert to dict for manipulation
             cfg_dict = OmegaConf.to_container(cfg, resolve=True)
             
-            # Apply model-specific adjustments
-            cfg_dict = self._apply_model_specific_config(model_name, cfg_dict)
+            # Apply Swin-specific adjustments
+            if model_name.startswith('swin'):
+                self._apply_swin_config(model_name, cfg_dict)
             
             # Apply overrides
             if overrides:
@@ -193,7 +184,7 @@ class UnifiedExperimentRunner:
                         target = target[k]
                     target[keys[-1]] = value
             
-            # Convert back to OmegaConf
+            # Convert back to OmegaConf and resolve any remaining interpolations
             cfg = OmegaConf.create(cfg_dict)
             
             # Ensure directories exist
@@ -212,35 +203,31 @@ class UnifiedExperimentRunner:
             # Always clean up Hydra
             GlobalHydra.instance().clear()
     
-    def _apply_model_specific_config(self, model_name: str, cfg_dict: dict) -> dict:
-        """Apply model-specific configuration adjustments."""
-        # Swin-specific adjustments
-        if model_name.startswith('swin'):
-            # Apply Blackwell optimizations if available
-            if self.hardware['is_blackwell'] and 'blackwell_optimizations' in cfg_dict.get('model', {}):
-                blackwell_opts = cfg_dict['model']['blackwell_optimizations']
-                console.print("[green]Applying Blackwell GPU optimizations[/green]")
+    def _apply_swin_config(self, model_name: str, cfg_dict: dict):
+        """Apply Swin-specific configuration adjustments."""
+        # Check for Blackwell GPU optimizations
+        if torch.cuda.is_available():
+            gpu_memory = torch.cuda.get_device_properties(0).total_memory / 1e9
+            if gpu_memory > 80:  # Blackwell GPU detected
+                console.print("[green]Blackwell GPU detected! Applying optimizations.[/green]")
                 
-                # Update batch size
-                if 'batch_size' in blackwell_opts:
-                    cfg_dict['training']['batch_size'] = blackwell_opts['batch_size']
-                
-                # Update mixed precision
-                if 'mixed_precision' in blackwell_opts:
-                    cfg_dict['training']['mixed_precision'] = blackwell_opts['mixed_precision']
+                # Apply Blackwell optimizations if defined in model config
+                if 'blackwell_optimizations' in cfg_dict.get('model', {}):
+                    blackwell_opts = cfg_dict['model']['blackwell_optimizations']
+                    
+                    if 'batch_size' in blackwell_opts:
+                        cfg_dict['training']['batch_size'] = blackwell_opts['batch_size']
+                        console.print(f"[cyan]Batch size set to {blackwell_opts['batch_size']}[/cyan]")
+                    
+                    if 'mixed_precision' in blackwell_opts:
+                        cfg_dict['trainer']['precision'] = (
+                            'bf16-mixed' if blackwell_opts['mixed_precision'] == 'bf16' else '16-mixed'
+                        )
             
-            # Apply layer-wise LR decay if specified
-            if 'training_adjustments' in cfg_dict.get('model', {}):
-                adjustments = cfg_dict['model']['training_adjustments']
-                if 'layer_decay' in adjustments:
-                    console.print(f"[cyan]Applying layer-wise LR decay: {adjustments['layer_decay']}[/cyan]")
-            
-            # Memory warning for large models
-            if model_name == 'swin_large' and self.hardware['gpu_memory_gb'] < 40:
+            # Memory warning for Swin-Large
+            if model_name == 'swin_large' and gpu_memory < 40:
                 console.print("[yellow]⚠️  Warning: Swin-Large requires significant GPU memory![/yellow]")
-                console.print(f"[yellow]Available: {self.hardware['gpu_memory_gb']:.1f}GB, Recommended: 40GB+[/yellow]")
-        
-        return cfg_dict
+                console.print(f"[yellow]Available: {gpu_memory:.1f}GB, Recommended: 40GB+[/yellow]")
     
     def _execute_training(self, cfg: DictConfig) -> Dict:
         """Execute the training for a single experiment.
@@ -259,41 +246,48 @@ class UnifiedExperimentRunner:
         console.print("[yellow]Creating data loaders...[/yellow]")
         train_loader, val_loader, test_loader = create_data_loaders(cfg)
         
-        # Create model based on type
-        if cfg.model.type == 'vit' or cfg.model.name.startswith('vit') or cfg.model.name.startswith('deit'):
-            # Vision Transformer models
-            model_module = ThyroidViTModule(cfg)
-        elif cfg.model.name.startswith('swin'):
-            # Swin Transformer models - use ViT module as base
+        # Determine model type from config
+        model_type = cfg.model.get('type', None)
+        model_name = cfg.model.name
+        
+        # Create appropriate model module
+        if model_type in ['vit', 'deit', 'swin'] or model_name.startswith(('vit_', 'deit_', 'swin_')):
+            if not VIT_AVAILABLE:
+                raise ImportError("Vision Transformer models are not available. Please check installation.")
+            
+            # Use Vision Transformer module
             model_module = ThyroidViTModule(cfg)
             
-            # Override model creation for Swin
-            if SWIN_AVAILABLE:
+            # For Swin models, override the model creation if available
+            if model_name.startswith('swin') and SWIN_AVAILABLE:
                 params = dict(cfg.model.params) if 'params' in cfg.model else {}
-                if cfg.model.name == 'swin_tiny':
+                
+                # Create the appropriate Swin model
+                if model_name == 'swin_tiny':
                     model_module.model = create_swin_tiny(**params)
-                elif cfg.model.name == 'swin_small':
+                elif model_name == 'swin_small':
                     model_module.model = create_swin_small(**params)
-                elif cfg.model.name == 'swin_base':
+                elif model_name == 'swin_base':
                     model_module.model = create_swin_base(**params)
-                elif cfg.model.name == 'swin_large':
+                elif model_name == 'swin_large':
                     model_module.model = create_swin_large(**params)
-                elif cfg.model.name == 'swin_medical':
+                elif model_name == 'swin_medical':
                     model_module.model = create_swin_medical(**params)
+                    
+                console.print(f"[green]Created Swin Transformer: {model_name}[/green]")
         else:
-            # CNN models
+            # Use CNN module
             model_module = ThyroidCNNModule(cfg)
         
         # Calculate total parameters
         total_params = sum(p.numel() for p in model_module.parameters())
-        console.print(f"[green]Model created: {cfg.model.name} ({total_params:,} parameters)[/green]")
+        trainable_params = sum(p.numel() for p in model_module.parameters() if p.requires_grad)
+        console.print(f"[green]Model created: {cfg.model.name}[/green]")
+        console.print(f"  Total parameters: {total_params:,}")
+        console.print(f"  Trainable parameters: {trainable_params:,}")
         
         # Create callbacks
-        callbacks = [
-            RichProgressBar(),
-            LearningRateMonitor(logging_interval='epoch'),
-            BestCheckpointCallback()
-        ]
+        callbacks = []
         
         # Model checkpoint
         checkpoint_callback = ModelCheckpoint(
@@ -302,74 +296,88 @@ class UnifiedExperimentRunner:
             monitor='val_acc',
             mode='max',
             save_top_k=3,
-            save_last=True
+            save_last=True,
+            verbose=True
         )
         callbacks.append(checkpoint_callback)
         
         # Early stopping
         if cfg.training.early_stopping.enabled:
-            early_stopping = EarlyStopping(
-                monitor='val_acc',
+            early_stop_callback = EarlyStopping(
+                monitor=cfg.training.early_stopping.monitor,
                 patience=cfg.training.early_stopping.patience,
-                mode='max'
+                mode=cfg.training.early_stopping.mode,
+                min_delta=cfg.training.early_stopping.min_delta,
+                verbose=True
             )
-            callbacks.append(early_stopping)
+            callbacks.append(early_stop_callback)
+        
+        # Progress bar
+        callbacks.append(RichProgressBar())
+        
+        # Learning rate monitor
+        callbacks.append(LearningRateMonitor(logging_interval='epoch'))
+        
+        # Best checkpoint callback
+        callbacks.append(BestCheckpointCallback())
         
         # Create logger
         logger = None
-        if cfg.wandb.enabled and cfg.wandb.mode != 'disabled':
+        if cfg.wandb.mode != 'disabled':
             logger = WandbLogger(
                 project=cfg.wandb.project,
                 name=f"{cfg.model.name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
-                config=OmegaConf.to_container(cfg, resolve=True),
-                mode=cfg.wandb.mode
+                tags=cfg.wandb.tags,
+                mode=cfg.wandb.mode,
+                config=OmegaConf.to_container(cfg, resolve=True)
             )
         
         # Create trainer
-        trainer_args = {
-            'max_epochs': cfg.trainer.max_epochs,
-            'accelerator': 'gpu' if device.type == 'cuda' else device.type,
-            'devices': 1,
+        trainer_config = dict(cfg.trainer)
+        trainer_config.update({
             'callbacks': callbacks,
             'logger': logger,
-            'enable_progress_bar': True,
-            'deterministic': True,
-            'gradient_clip_val': cfg.trainer.gradient_clip_val
-        }
+            'max_epochs': cfg.training.num_epochs,
+        })
         
-        # Add mixed precision for Swin if specified
-        if cfg.model.name.startswith('swin') and 'mixed_precision' in cfg.get('training', {}):
-            if cfg.training.mixed_precision == 'bf16':
-                trainer_args['precision'] = 'bf16-mixed'
-            elif cfg.training.mixed_precision == 'fp16':
-                trainer_args['precision'] = '16-mixed'
+        # Handle device-specific settings
+        if device.type == 'mps':
+            trainer_config['accelerator'] = 'mps'
+            trainer_config['devices'] = 1
+            trainer_config['precision'] = 32  # MPS doesn't support mixed precision yet
+        elif device.type == 'cuda':
+            trainer_config['accelerator'] = 'gpu'
+            trainer_config['devices'] = 1
+            
+            # Apply mixed precision settings for Swin if specified
+            if model_name.startswith('swin') and 'mixed_precision' in cfg.get('training', {}):
+                if cfg.training.mixed_precision == 'bf16':
+                    trainer_config['precision'] = 'bf16-mixed'
+                elif cfg.training.mixed_precision == 'fp16':
+                    trainer_config['precision'] = '16-mixed'
+        else:
+            trainer_config['accelerator'] = 'cpu'
+            trainer_config['devices'] = 1
         
-        # Quick test modifications
-        if 'limit_train_batches' in cfg.trainer:
-            trainer_args['limit_train_batches'] = cfg.trainer.limit_train_batches
-        if 'limit_val_batches' in cfg.trainer:
-            trainer_args['limit_val_batches'] = cfg.trainer.limit_val_batches
+        trainer = pl.Trainer(**trainer_config)
         
-        trainer = pl.Trainer(**trainer_args)
-        
-        # Train model
-        console.print(f"\n[bold yellow]Training {cfg.model.name}...[/bold yellow]")
+        # Train
+        console.print(f"\n[bold yellow]Starting training for {cfg.model.name}...[/bold yellow]")
         trainer.fit(model_module, train_loader, val_loader)
         
-        # Test model
+        # Test
         console.print(f"\n[bold yellow]Testing {cfg.model.name}...[/bold yellow]")
         test_results = trainer.test(model_module, test_loader, ckpt_path='best')
         
         # Prepare results
         results = {
             'test_acc': test_results[0]['test_acc'] if test_results else 0.0,
-            'val_acc': trainer.callback_metrics.get('val_acc', 0.0).item() if 'val_acc' in trainer.callback_metrics else 0.0,
+            'val_acc': checkpoint_callback.best_model_score.item() if hasattr(checkpoint_callback, 'best_model_score') else 0.0,
             'train_acc': trainer.callback_metrics.get('train_acc', 0.0).item() if 'train_acc' in trainer.callback_metrics else 0.0,
-            'total_params': total_params,
-            'best_epoch': checkpoint_callback.best_model_score.item() if hasattr(checkpoint_callback, 'best_model_score') else -1
+            'total_params': total_params
         }
         
-        # Close wandb if it was used
+        # Clean up
         if logger:
             wandb.finish()
         
@@ -453,7 +461,6 @@ class UnifiedExperimentRunner:
                 'status': 'error',
                 'error': str(e),
                 'time_seconds': time.time() - start_time,
-                'time_formatted': f"{(time.time() - start_time)/60:.1f} min",
                 'model_name': model_name,
                 'model_type': model_type
             }
@@ -552,7 +559,7 @@ def parse_args():
     
     # Model selection
     parser.add_argument('--model', '-m', type=str, default='resnet18',
-                       help='Model name for single mode (e.g., resnet18, efficientnet_b0, vit_tiny, swin_small)')
+                       help='Model name for single mode (e.g., resnet18, efficientnet_b0, vit_tiny)')
     
     parser.add_argument('--model-type', type=str, choices=['cnn', 'vit'], default='cnn',
                        help='Model type (cnn or vit)')
@@ -658,10 +665,6 @@ def main():
             console.print("[red]No ViT models found![/red]")
             sys.exit(1)
         
-        # Use custom model list if provided
-        if args.models:
-            vit_models = [m for m in args.models if m in vit_models]
-        
         results = runner.run_model_sweep(
             models=vit_models,
             model_type='vit',
@@ -677,7 +680,10 @@ def main():
             sys.exit(1)
         
         # Determine model type from first model
-        model_type = 'vit' if args.models[0] in available_models['vit'] else 'cnn'
+        if args.models[0] in available_models['vit']:
+            model_type = 'vit'
+        else:
+            model_type = 'cnn'
         
         results = runner.run_model_sweep(
             models=args.models,
@@ -739,18 +745,14 @@ def main():
         best_model = max(successful_results.items(), key=lambda x: x[1].get('test_acc', 0))
         console.print(f"[green]• Best performing model: {best_model[0]} ({best_model[1].get('test_acc', 0):.4f} test accuracy)[/green]")
         
-        # Model-specific recommendations
-        if best_model[0].startswith('swin'):
-            console.print("• Swin Transformer shows hierarchical feature learning")
-            if runner.hardware['is_blackwell']:
-                console.print("• Blackwell GPU detected - consider Swin-Large for maximum performance")
-        
         # Compare with baseline
         if best_model[1].get('test_acc', 0) > 0.853:  # Better than ResNet18 baseline
             console.print("[green]• Model outperforms ResNet18 baseline (85.3%)![/green]")
         
-        if best_model[1].get('test_acc', 0) > 0.9265:  # Better than best CNN
-            console.print("[bold green]• Model outperforms best CNN (92.65%)! 🎉[/bold green]")
+        # Check for Swin models
+        if best_model[0].startswith('swin'):
+            console.print("• Swin Transformer shows promising results!")
+            console.print("• Consider ensemble with CNN models for best performance")
     
     console.print("• Consider ensemble of top performing models")
     console.print("• Test with different augmentation levels")

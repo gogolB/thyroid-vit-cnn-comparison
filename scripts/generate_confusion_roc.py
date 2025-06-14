@@ -24,7 +24,7 @@ from tqdm import tqdm
 sys.path.append(str(Path(__file__).parent.parent))
 
 from src.data.dataset import CARSThyroidDataset
-from src.data.transforms import get_validation_transforms
+from src.data.quality_preprocessing import create_quality_aware_transform
 from torch.utils.data import DataLoader
 from rich.console import Console
 
@@ -58,14 +58,19 @@ MODELS = {
 
 def get_test_dataloader(batch_size=32, target_size=256):
     """Create test dataloader with specified target size."""
-    transform = get_validation_transforms(target_size=target_size, normalize=True)
+    transform = create_quality_aware_transform(
+            target_size=target_size,
+            quality_report_path=Path('reports/quality_report.json'),
+            augmentation_level='none',  # No augmentation for validation
+            split='val'
+        )
     
     dataset = CARSThyroidDataset(
         root_dir='data/raw',
         split='test',
         transform=transform,
         target_size=target_size,
-        normalize=True,
+        normalize=False,
         patient_level_split=False
     )
     

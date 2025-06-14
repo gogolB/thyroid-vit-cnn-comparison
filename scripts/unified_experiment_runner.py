@@ -300,23 +300,11 @@ class UnifiedExperimentRunner:
             # Use Vision Transformer module
             model_module = ThyroidViTModule(cfg)
             
-            # For Swin models, override the model creation if available
-            if model_name.startswith('swin') and SWIN_AVAILABLE:
-                params = dict(cfg.model.params) if 'params' in cfg.model else {}
-                
-                # Create the appropriate Swin model
-                if model_name == 'swin_tiny':
-                    model_module.model = create_swin_tiny(**params)
-                elif model_name == 'swin_small':
-                    model_module.model = create_swin_small(**params)
-                elif model_name == 'swin_base':
-                    model_module.model = create_swin_base(**params)
-                elif model_name == 'swin_large':
-                    model_module.model = create_swin_large(**params)
-                elif model_name == 'swin_medical':
-                    model_module.model = create_swin_medical(**params)
-                    
-                console.print(f"[green]Created Swin Transformer: {model_name}[/green]")
+            # Don't override model creation for Swin anymore!
+            # The ThyroidViTModule._create_model will handle it properly
+            # and pass the pretrained_cfg from the config
+            
+            console.print(f"[green]Created {model_type.upper()} model: {model_name}[/green]")
         else:
             # Use CNN module
             model_module = ThyroidCNNModule(cfg)

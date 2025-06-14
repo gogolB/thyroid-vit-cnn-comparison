@@ -690,9 +690,99 @@ class SwinTransformer(VisionTransformerBase):
 
 
 # Factory functions for standard configurations
-def create_swin_tiny(pretrained: bool = False, **kwargs) -> SwinTransformer:
+import timm
+import warnings
+from typing import Dict, Any, Optional
+
+def load_pretrained_swin_from_timm(
+    model_name: str,
+    pretrained_cfg: Dict[str, Any],
+    in_chans: int = 1,
+    num_classes: int = 2,
+    **kwargs
+) -> nn.Module:
+    """Load a pretrained Swin model from timm and adapt it."""
+    
+    # Get timm model name from pretrained_cfg or use default mapping
+    timm_model_map = {
+        'swin_tiny': 'swin_tiny_patch4_window7_224',
+        'swin_small': 'swin_small_patch4_window7_224', 
+        'swin_base': 'swin_base_patch4_window7_224',
+        'swin_large': 'swin_large_patch4_window12_384',
+        'swin_medical': 'swin_small_patch4_window7_224',  # Use small as base for medical
+    }
+    
+    # Use URL from config if it's a valid timm model name
+    timm_model_name = pretrained_cfg.get('url', timm_model_map.get(model_name, model_name))
+    
+    # Remove 'microsoft/' prefix if present
+    if timm_model_name.startswith('microsoft/'):
+        timm_model_name = timm_model_name.replace('microsoft/', '')
+    
+    print(f"Loading pretrained weights from timm: {timm_model_name}")
+    
+    try:
+        # Create the pretrained model
+        model = timm.create_model(
+            timm_model_name,
+            pretrained=True,
+            num_classes=num_classes,
+            in_chans=3  # Load with RGB weights initially
+        )
+        
+        # Adapt for grayscale input if needed
+        if in_chans == 1:
+            # Get the patch embedding layer
+            patch_embed = model.patch_embed
+            old_proj = patch_embed.proj
+            
+            # Create new conv layer for grayscale
+            new_proj = nn.Conv2d(
+                1, old_proj.out_channels,
+                kernel_size=old_proj.kernel_size,
+                stride=old_proj.stride,
+                padding=old_proj.padding
+            )
+            
+            # Average RGB weights to grayscale
+            with torch.no_grad():
+                new_proj.weight.data = old_proj.weight.data.mean(dim=1, keepdim=True)
+                if old_proj.bias is not None:
+                    new_proj.bias.data = old_proj.bias.data
+            
+            # Replace the projection layer
+            patch_embed.proj = new_proj
+            model.patch_embed = patch_embed
+            
+            print(f"Adapted model for grayscale input (in_chans={in_chans})")
+        
+        # Update any additional parameters that might be in kwargs
+        if 'drop_rate' in kwargs:
+            model.drop_rate = kwargs['drop_rate']
+        if 'drop_path_rate' in kwargs:
+            model.drop_path_rate = kwargs['drop_path_rate']
+            
+        print(f"Successfully loaded pretrained {model_name} with {sum(p.numel() for p in model.parameters()):,} parameters")
+        
+        return model
+        
+    except Exception as e:
+        print(f"Failed to load pretrained weights: {e}")
+        print("Falling back to random initialization")
+        return None
+
+
+# Factory functions for standard configurations
+def create_swin_tiny(pretrained: bool = False, pretrained_cfg: Optional[Dict] = None, **kwargs) -> SwinTransformer:
     """Create Swin-Tiny model."""
-    # Default parameters for Swin-Tiny
+    
+    # Try to load pretrained from timm if requested
+    if pretrained and pretrained_cfg is not None:
+        timm_model = load_pretrained_swin_from_timm('swin_tiny', pretrained_cfg, **kwargs)
+        if timm_model is not None:
+            return timm_model
+    
+    # Fall back to custom implementation
     defaults = {
         'embed_dim': 96,
         'depths': [2, 2, 6, 2],
@@ -700,23 +790,27 @@ def create_swin_tiny(pretrained: bool = False, **kwargs) -> SwinTransformer:
         'window_size': 7,
     }
     
-    # Update defaults with any provided kwargs
-    # This prevents duplicate keyword arguments
     for key, value in defaults.items():
         kwargs.setdefault(key, value)
     
     model = SwinTransformer(**kwargs)
     
-    if pretrained:
-        # Load pretrained weights from timm or custom checkpoint
-        warnings.warn("Pretrained weights loading not implemented yet")
+    if pretrained and pretrained_cfg is None:
+        warnings.warn("Pretrained weights requested but no pretrained_cfg provided")
     
     return model
 
 
-def create_swin_small(pretrained: bool = False, **kwargs) -> SwinTransformer:
+def create_swin_small(pretrained: bool = False, pretrained_cfg: Optional[Dict] = None, **kwargs) -> SwinTransformer:
     """Create Swin-Small model."""
-    # Default parameters for Swin-Small
+    
+    # Try to load pretrained from timm if requested
+    if pretrained and pretrained_cfg is not None:
+        timm_model = load_pretrained_swin_from_timm('swin_small', pretrained_cfg, **kwargs)
+        if timm_model is not None:
+            return timm_model
+    
+    # Fall back to custom implementation
     defaults = {
         'embed_dim': 96,
         'depths': [2, 2, 18, 2],
@@ -724,21 +818,27 @@ def create_swin_small(pretrained: bool = False, **kwargs) -> SwinTransformer:
         'window_size': 7,
     }
     
-    # Update defaults with any provided kwargs
     for key, value in defaults.items():
         kwargs.setdefault(key, value)
     
     model = SwinTransformer(**kwargs)
     
-    if pretrained:
-        warnings.warn("Pretrained weights loading not implemented yet")
+    if pretrained and pretrained_cfg is None:
+        warnings.warn("Pretrained weights requested but no pretrained_cfg provided")
     
     return model
 
 
-def create_swin_base(pretrained: bool = False, **kwargs) -> SwinTransformer:
+def create_swin_base(pretrained: bool = False, pretrained_cfg: Optional[Dict] = None, **kwargs) -> SwinTransformer:
     """Create Swin-Base model."""
-    # Default parameters for Swin-Base
+    
+    # Try to load pretrained from timm if requested
+    if pretrained and pretrained_cfg is not None:
+        timm_model = load_pretrained_swin_from_timm('swin_base', pretrained_cfg, **kwargs)
+        if timm_model is not None:
+            return timm_model
+    
+    # Fall back to custom implementation
     defaults = {
         'embed_dim': 128,
         'depths': [2, 2, 18, 2],
@@ -746,21 +846,27 @@ def create_swin_base(pretrained: bool = False, **kwargs) -> SwinTransformer:
         'window_size': 7,
     }
     
-    # Update defaults with any provided kwargs
     for key, value in defaults.items():
         kwargs.setdefault(key, value)
     
     model = SwinTransformer(**kwargs)
     
-    if pretrained:
-        warnings.warn("Pretrained weights loading not implemented yet")
+    if pretrained and pretrained_cfg is None:
+        warnings.warn("Pretrained weights requested but no pretrained_cfg provided")
     
     return model
 
 
-def create_swin_large(pretrained: bool = False, **kwargs) -> SwinTransformer:
+def create_swin_large(pretrained: bool = False, pretrained_cfg: Optional[Dict] = None, **kwargs) -> SwinTransformer:
     """Create Swin-Large model (Blackwell GPU exclusive)."""
-    # Default parameters for Swin-Large
+    
+    # Try to load pretrained from timm if requested
+    if pretrained and pretrained_cfg is not None:
+        timm_model = load_pretrained_swin_from_timm('swin_large', pretrained_cfg, **kwargs)
+        if timm_model is not None:
+            return timm_model
+    
+    # Fall back to custom implementation
     defaults = {
         'embed_dim': 192,
         'depths': [2, 2, 18, 2],
@@ -768,30 +874,38 @@ def create_swin_large(pretrained: bool = False, **kwargs) -> SwinTransformer:
         'window_size': 7,
     }
     
-    # Update defaults with any provided kwargs
     for key, value in defaults.items():
         kwargs.setdefault(key, value)
     
     model = SwinTransformer(**kwargs)
     
-    if pretrained:
-        warnings.warn("Pretrained weights loading not implemented yet")
+    if pretrained and pretrained_cfg is None:
+        warnings.warn("Pretrained weights requested but no pretrained_cfg provided")
     
     return model
 
 
-# Variable window size configurations for medical imaging
 def create_swin_medical(
     variant: str = 'small',
     window_sizes: List[int] = [5, 7, 9, 7],
     pretrained: bool = False,
+    pretrained_cfg: Optional[Dict] = None,
     **kwargs
 ) -> SwinTransformer:
     """
     Create Swin model with medical imaging optimizations.
-    
-    Uses variable window sizes across stages for better tissue pattern capture.
+    Uses Swin-Small as base when loading pretrained weights.
     """
+    
+    # Try to load pretrained from timm if requested
+    if pretrained and pretrained_cfg is not None:
+        # For medical variant, use swin_small as base
+        timm_model = load_pretrained_swin_from_timm('swin_medical', pretrained_cfg, **kwargs)
+        if timm_model is not None:
+            print("Note: Using Swin-Small pretrained weights as base for medical variant")
+            return timm_model
+    
+    # Fall back to custom implementation
     configs = {
         'tiny': {'embed_dim': 96, 'depths': [2, 2, 6, 2], 'num_heads': [3, 6, 12, 24]},
         'small': {'embed_dim': 96, 'depths': [2, 2, 18, 2], 'num_heads': [3, 6, 12, 24]},
@@ -803,21 +917,16 @@ def create_swin_medical(
     
     config = configs[variant]
     
-    # Update kwargs with config values, but don't override if already present
     for key, value in config.items():
         kwargs.setdefault(key, value)
     
-    # Create model with first window size
     kwargs.setdefault('window_size', window_sizes[0])
     kwargs.setdefault('medical_adaptations', True)
     
     model = SwinTransformer(**kwargs)
     
-    # TODO: Implement variable window sizes per stage
-    # This requires modifying the stage creation to accept per-stage window sizes
-    
-    if pretrained:
-        warnings.warn("Pretrained weights loading not implemented yet")
+    if pretrained and pretrained_cfg is None:
+        warnings.warn("Pretrained weights requested but no pretrained_cfg provided")
     
     return model
 

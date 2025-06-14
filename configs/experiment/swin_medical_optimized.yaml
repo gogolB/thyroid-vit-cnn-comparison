@@ -1,0 +1,90 @@
+# Medical-optimized Swin experiment
+# All medical adaptations enabled, targeting 94.4%
+
+defaults:
+  - override /model: vit/swin_medical
+  - override /training: swin_standard
+
+# Experiment identification
+experiment_name: swin_medical_optimized_v1
+tags: ["swin", "medical", "quality-aware", "contrast-adaptive"]
+
+# Model configuration
+model:
+  pretrained: true
+  params:
+    # Enhanced medical features
+    medical_adaptations: true
+    contrast_adaptive: true
+    quality_guided: true
+    quality_dim: 16  # Rich quality encoding
+    
+    # Stronger regularization
+    drop_path_rate: 0.3
+    drop_rate: 0.1
+    
+    # Try different window size
+    window_size: 8  # Better for 256x256 images
+
+# Optimized training
+training:
+  num_epochs: 400  # Longer training
+  batch_size: 32  # Will be 128 on Blackwell
+  
+  optimizer:
+    lr: 0.0003  # Lower LR
+    weight_decay: 0.08  # Stronger weight decay
+    
+  scheduler:
+    warmup_epochs: 40  # Longer warmup
+    min_lr: 1e-7
+    
+  # Layer-wise LR decay
+  training_techniques:
+    layer_lr_decay:
+      decay_rate: 0.8  # Stronger decay
+
+# Medical image augmentation
+augmentation:
+  # Microscopy-specific
+  elastic_deform:
+    enabled: true
+    alpha: 50
+    sigma: 5
+    
+  # Stain augmentation simulation
+  color_jitter:
+    brightness: 0.3
+    contrast: 0.4
+    
+  # Strong augmentation for small dataset
+  randaugment:
+    n: 3
+    m: 10
+    
+  mixup:
+    alpha: 0.8
+    prob: 0.5
+    
+  cutmix:
+    alpha: 1.0
+    prob: 0.5
+
+# Quality-aware training
+dataset_specific:
+  quality_aware_sampling: true
+  quality_threshold: 0.7  # Focus on high-quality patches
+  contrast_enhancement: true
+  
+# Advanced monitoring
+monitoring:
+  track_attention_maps: true
+  save_attention_every_n_epochs: 20
+  track_quality_scores: true
+  per_class_metrics: true
+
+# Expected performance
+expected_metrics:
+  val_acc: 0.935  # ~93.5%
+  test_acc: 0.93
+  convergence_epoch: 250

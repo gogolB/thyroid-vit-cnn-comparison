@@ -1,0 +1,132 @@
+# Target 94.4% accuracy configuration
+# Maximum performance push with all techniques
+
+defaults:
+  - override /model: vit/swin_base  # Larger model
+  - override /training: swin_standard
+
+# Experiment identification
+experiment_name: swin_base_target_944
+tags: ["swin", "target-944", "maximum-performance", "ensemble-ready"]
+
+# Model configuration
+model:
+  pretrained: true
+  params:
+    # Use Swin-Base for more capacity
+    embed_dim: 128
+    depths: [2, 2, 18, 2]
+    num_heads: [4, 8, 16, 32]
+    
+    # All medical features
+    medical_adaptations: true
+    contrast_adaptive: true
+    quality_guided: true
+    quality_dim: 16
+    
+    # Optimal regularization (found through search)
+    drop_path_rate: 0.35
+    drop_rate: 0.0  # No dropout with drop_path
+    attn_drop_rate: 0.0
+    
+    # Multi-scale windows (if supported)
+    window_size: 8  # or 7, need to test both
+
+# Aggressive training strategy
+training:
+  num_epochs: 500  # Maximum epochs
+  batch_size: 64  # 128 on Blackwell
+  
+  optimizer:
+    lr: 0.0004
+    weight_decay: 0.1  # Strong regularization
+    
+  scheduler:
+    warmup_epochs: 50
+    min_lr: 1e-8
+    
+  training_techniques:
+    layer_lr_decay:
+      decay_rate: 0.75
+    gradient_clip:
+      max_norm: 0.5  # Aggressive clipping
+    ema:
+      decay: 0.99995  # Strong EMA
+
+# Maximum augmentation
+augmentation:
+  # Spatial
+  random_resized_crop:
+    scale: [0.7, 1.0]  # Wider range
+    ratio: [0.8, 1.2]
+    
+  # Advanced augmentation stack
+  randaugment:
+    n: 4  # More transforms
+    m: 12  # Higher magnitude
+    
+  mixup:
+    alpha: 1.0
+    prob: 0.8  # Almost always
+    
+  cutmix:
+    alpha: 1.0
+    prob: 0.8
+    
+  # Microscopy-specific
+  elastic_deform:
+    enabled: true
+    alpha: 100
+    sigma: 10
+    
+  gaussian_blur:
+    enabled: true
+    kernel_size: [3, 5, 7]
+    sigma: [0.1, 2.0]
+
+# Multi-resolution training (Blackwell only)
+multi_resolution:
+  enabled: true
+  resolutions: [224, 256, 384]
+  schedule: "random"  # Random resolution each epoch
+  
+# Ensemble preparation
+ensemble:
+  save_checkpoints: [350, 400, 450, 500]  # For ensemble
+  track_diversity: true
+  
+# Test-time augmentation
+tta:
+  enabled: true
+  num_augmentations: 10
+  augmentations: ["hflip", "vflip", "rotate90", "scale"]
+
+# Quality focus
+dataset_specific:
+  quality_aware_sampling: true
+  quality_threshold: 0.8  # Very high quality only
+  hard_mining:
+    enabled: true
+    focus_on_errors: true
+    error_weight: 2.0
+
+# Blackwell-specific optimizations
+blackwell:
+  batch_size: 128
+  mixed_precision: "bf16"
+  compile_model: true
+  parallel_augmentation: true
+  prefetch_batches: 3
+
+# Expected performance
+expected_metrics:
+  val_acc: 0.944  # Target!
+  test_acc: 0.942
+  convergence_epoch: 400
+  
+# Monitoring
+monitoring:
+  track_everything: true
+  save_predictions: true
+  confusion_matrix_every: 50
+  attention_analysis: true

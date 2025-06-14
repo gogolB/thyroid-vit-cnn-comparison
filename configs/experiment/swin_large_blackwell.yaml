@@ -1,0 +1,153 @@
+# Swin-Large Blackwell GPU configuration
+# Pushing boundaries with 96GB VRAM
+
+defaults:
+  - override /model: vit/swin_large
+  - override /training: swin_standard
+
+# Experiment identification
+experiment_name: swin_large_blackwell_ultra
+tags: ["swin-large", "blackwell", "96gb", "ultra-performance"]
+
+# Model configuration - Swin-Large
+model:
+  pretrained: true
+  params:
+    # Maximum capacity
+    embed_dim: 192
+    depths: [2, 2, 18, 2]
+    num_heads: [6, 12, 24, 48]
+    
+    # Enhanced features
+    medical_adaptations: true
+    contrast_adaptive: true
+    quality_guided: true
+    quality_dim: 32  # Maximum quality encoding
+    
+    # Carefully tuned regularization
+    drop_path_rate: 0.4  # High but not too high
+    drop_rate: 0.0
+    attn_drop_rate: 0.0
+    
+    # Checkpoint gradient for efficiency
+    use_checkpoint: false  # We have memory!
+
+# Blackwell-optimized training
+training:
+  num_epochs: 600
+  batch_size: 128  # Large batch size
+  gradient_accumulation_steps: 1  # No accumulation needed
+  
+  optimizer:
+    lr: 0.001  # Can use higher LR with large batch
+    weight_decay: 0.1
+    
+  scheduler:
+    warmup_epochs: 60
+    min_lr: 1e-8
+    
+  training_techniques:
+    layer_lr_decay:
+      decay_rate: 0.7  # Strong decay for large model
+    mixed_precision:
+      dtype: "bfloat16"  # Better than fp16
+    ema:
+      decay: 0.99999
+
+# Ultra augmentation suite
+augmentation:
+  # Multi-scale training
+  multi_scale:
+    scales: [224, 256, 384, 512]  # Including 512!
+    mode: "progressive"  # Start small, go bigger
+    
+  # Maximum augmentation
+  randaugment:
+    n: 5
+    m: 15  # Maximum magnitude
+    
+  mixup:
+    alpha: 1.2
+    prob: 1.0  # Always on
+    
+  cutmix:
+    alpha: 2.0  # Strong cutmix
+    prob: 1.0
+    
+  # Advanced compositions
+  augmix:
+    enabled: true
+    severity: 3
+    width: 3
+    
+  # Microscopy suite
+  microscopy_augment:
+    stain_variation: true
+    focus_blur: true
+    illumination_variation: true
+    dust_particles: true
+
+# Parallel experiments (unique to 96GB)
+parallel_training:
+  # Train multiple models simultaneously
+  concurrent_models:
+    - config: "swin_large_window7"
+    - config: "swin_large_window11"  # Larger windows
+    - config: "swin_large_window15"  # Even larger
+  
+  # Memory allocation per model
+  memory_per_model: 30  # GB
+  
+# Advanced ensemble in memory
+ensemble_training:
+  models_in_memory: ["swin_large", "swin_base", "efficientnet_b1", "vit_base"]
+  fusion_method: "learned_attention"
+  train_fusion: true
+
+# Multi-teacher distillation (all teachers in memory)
+distillation:
+  enabled: true
+  teachers:
+    - checkpoint: "efficientnet_b1_best.ckpt"  # 92.65%
+    - checkpoint: "efficientnet_b2_best.ckpt"  # 88.24%
+    - checkpoint: "resnet50_best.ckpt"  # 91.18%
+    - checkpoint: "densenet121_best.ckpt"  # 88.24%
+    - checkpoint: "vit_base_best.ckpt"  # 88.24%
+  temperature: 4.0
+  alpha: 0.7
+
+# High-resolution experiments
+high_resolution:
+  test_resolutions: [256, 384, 512, 768]
+  tta_scales: [0.8, 0.9, 1.0, 1.1, 1.2]
+  
+# Neural Architecture Search (NAS)
+nas:
+  enabled: true
+  search_space:
+    window_sizes: [5, 7, 9, 11, 13, 15]
+    depths: [[2,2,14,2], [2,2,18,2], [2,2,22,2]]
+    embed_dims: [160, 192, 224]
+  population_size: 10  # Can evaluate 10 architectures
+
+# Ultra monitoring
+monitoring:
+  log_every_n_steps: 5
+  track_all_gradients: true
+  save_all_attention_maps: true
+  compute_fisher_information: true
+  track_representation_similarity: true
+
+# Expected performance
+expected_metrics:
+  val_acc: 0.95  # Pushing beyond 94.4%
+  test_acc: 0.948
+  convergence_epoch: 500
+  ensemble_acc: 0.96  # With ensemble
+
+# Checkpoint strategy
+checkpoint:
+  save_every_epoch: true  # We have space
+  keep_all: true  # 350GB available
+  save_optimizer: true
+  save_ema: true

@@ -1,0 +1,68 @@
+# Swin Medical - Specialized configuration for thyroid microscopy
+# Optimized window sizes and medical-specific features
+
+name: swin_medical
+type: swin
+params:
+  # Architecture parameters
+  img_size: 256
+  patch_size: 4
+  in_chans: 1
+  num_classes: 2
+  embed_dim: 96
+  depths: [2, 2, 18, 2]  # Same as small
+  num_heads: [3, 6, 12, 24]
+  window_size: 7  # Default, but see window_sizes below
+  mlp_ratio: 4.0
+  
+  # Medical-optimized regularization
+  drop_rate: 0.05
+  attn_drop_rate: 0.0
+  drop_path_rate: 0.25
+  
+  # Advanced features
+  qkv_bias: true
+  qk_scale: null
+  ape: false
+  patch_norm: true
+  use_checkpoint: false
+  
+  # Enhanced medical adaptations
+  medical_adaptations: true
+  quality_dim: 8
+  contrast_adaptive: true
+  quality_guided: true
+  
+  # Variable window sizes per stage (experimental)
+  # window_sizes: [5, 7, 9, 7]  # Different patterns at each scale
+  
+# Start from standard pretrained weights
+pretrained: true
+pretrained_cfg:
+  url: "microsoft/swin-small-patch4-window7-224"
+  num_classes: 1000
+  input_size: [3, 224, 224]
+
+# Medical-specific training
+training_adjustments:
+  base_lr_scale: 0.7
+  warmup_epochs: 25
+  min_lr_ratio: 0.005
+  layer_decay: 0.85
+  
+# Data augmentation for medical images
+augmentation:
+  # Spatial augmentations
+  random_rotate: 45  # Thyroid orientation varies
+  random_scale: [0.8, 1.2]
+  elastic_deform: true
+  
+  # Intensity augmentations (microscopy-specific)
+  brightness_jitter: 0.2
+  contrast_jitter: 0.3
+  gaussian_noise: 0.02
+  
+  # Advanced augmentations
+  mixup_alpha: 0.4
+  cutmix_alpha: 0.8
+  cutmix_prob: 0.5

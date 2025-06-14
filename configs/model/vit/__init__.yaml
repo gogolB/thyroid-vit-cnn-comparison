@@ -1,0 +1,77 @@
+# Vision Transformer model registry
+# Maps model names to their configurations
+
+vit_models:
+  # Original ViT models
+  vit_tiny:
+    config: "vit_tiny.yaml"
+    params: ~5.7M
+    
+  vit_small:
+    config: "vit_small.yaml"
+    params: ~22M
+    
+  vit_base:
+    config: "vit_base.yaml"
+    params: ~86M
+    
+  # DeiT models
+  deit_tiny:
+    config: "deit_tiny.yaml"
+    params: ~5.7M
+    
+  deit_small:
+    config: "deit_small.yaml"
+    params: ~22M
+    
+  deit_base:
+    config: "deit_base.yaml"
+    params: ~86M
+    
+  # Swin Transformer models
+  swin_tiny:
+    config: "swin_tiny.yaml"
+    params: ~28M
+    architecture: "hierarchical"
+    
+  swin_small:
+    config: "swin_small.yaml"
+    params: ~50M
+    architecture: "hierarchical"
+    
+  swin_base:
+    config: "swin_base.yaml"
+    params: ~88M
+    architecture: "hierarchical"
+    
+  swin_large:
+    config: "swin_large.yaml"
+    params: ~197M
+    architecture: "hierarchical"
+    requirements: "96GB VRAM recommended"
+    
+  swin_medical:
+    config: "swin_medical.yaml"
+    params: ~50M
+    architecture: "hierarchical"
+    special: "medical_adaptations"
+
+# Model selection helper
+model_selection:
+  by_size:
+    small: ["vit_tiny", "deit_tiny", "swin_tiny"]
+    medium: ["vit_small", "deit_small", "swin_small", "swin_medical"]
+    large: ["vit_base", "deit_base", "swin_base"]
+    xlarge: ["swin_large"]
+    
+  by_performance:
+    baseline: ["vit_tiny", "deit_tiny"]
+    competitive: ["vit_small", "deit_small", "swin_tiny"]
+    strong: ["vit_base", "swin_small", "swin_medical"]
+    sota: ["swin_base", "swin_large"]
+    
+  by_purpose:
+    quick_test: ["vit_tiny", "swin_tiny"]
+    research: ["swin_small", "swin_medical", "swin_base"]
+    production: ["swin_medical", "swin_base"]
+    benchmark: ["swin_large"]

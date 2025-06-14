@@ -1,0 +1,128 @@
+# Standard training configuration for Swin Transformer
+# Optimized for hierarchical vision transformers
+
+# Basic training parameters
+num_epochs: 300
+batch_size: 32  # Will be overridden to 128 on Blackwell
+gradient_accumulation_steps: 1
+num_workers: 8
+pin_memory: true
+persistent_workers: true
+
+# Optimizer configuration (AdamW is best for transformers)
+optimizer:
+  name: adamw
+  lr: 0.001  # Will be scaled by model-specific factor
+  weight_decay: 0.05  # Higher than CNNs
+  betas: [0.9, 0.999]
+  eps: 1e-8
+
+# Scheduler configuration
+scheduler:
+  name: cosine
+  warmup_epochs: 20
+  warmup_start_lr: 1e-6
+  min_lr: 1e-5
+  
+# Swin-specific training techniques
+training_techniques:
+  # Layer-wise learning rate decay
+  layer_lr_decay:
+    enabled: true
+    decay_rate: 0.85  # Configurable per model
+    
+  # Gradient clipping
+  gradient_clip:
+    enabled: true
+    max_norm: 5.0
+    norm_type: 2
+    
+  # Mixed precision training
+  mixed_precision:
+    enabled: true
+    backend: "native"  # PyTorch native AMP
+    dtype: "float16"  # bf16 on Blackwell
+    
+  # Stochastic depth (drop path)
+  drop_path:
+    enabled: true
+    rate: 0.2  # Configured per model
+    mode: "linear"  # Linear decay from 0 to rate
+    
+  # EMA (Exponential Moving Average)
+  ema:
+    enabled: true
+    decay: 0.9999
+    update_every: 1
+
+# Data augmentation
+augmentation:
+  # Basic augmentations
+  random_resized_crop:
+    enabled: true
+    size: 256
+    scale: [0.8, 1.0]
+    ratio: [0.9, 1.1]
+    
+  horizontal_flip:
+    enabled: true
+    p: 0.5
+    
+  vertical_flip:
+    enabled: true
+    p: 0.5
+    
+  # Color augmentations (adapted for grayscale)
+  color_jitter:
+    enabled: true
+    brightness: 0.2
+    contrast: 0.2
+    
+  # Advanced augmentations
+  randaugment:
+    enabled: true
+    n: 2  # Number of augmentations
+    m: 9  # Magnitude
+    
+  mixup:
+    enabled: true
+    alpha: 0.8
+    prob: 0.5
+    
+  cutmix:
+    enabled: true
+    alpha: 1.0
+    prob: 0.5
+
+# Regularization
+regularization:
+  label_smoothing: 0.1
+  weight_decay: 0.05  # In optimizer
+  drop_path_rate: 0.2  # Model-specific
+
+# Monitoring and checkpointing
+monitoring:
+  track_attention_maps: true
+  track_gradient_norms: true
+  log_every_n_steps: 10
+  
+checkpoint:
+  save_top_k: 3
+  monitor: "val_acc"
+  mode: "max"
+  save_last: true
+  every_n_epochs: 10
+
+# Early stopping
+early_stopping:
+  enabled: true
+  monitor: "val_acc"
+  patience: 50  # Long patience for transformers
+  mode: "max"
+  min_delta: 0.001
+
+# Specific to thyroid dataset
+dataset_specific:
+  class_weights: null  # Balanced dataset
+  quality_aware_sampling: true
+  oversample_high_quality: 1.5  # 50% more likely to sample high quality

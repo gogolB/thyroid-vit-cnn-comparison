@@ -1,0 +1,52 @@
+# Baseline Swin experiment configuration
+# Standard training from pretrained weights
+
+defaults:
+  - override /model: vit/swin_small
+  - override /training: swin_standard
+
+# Experiment identification
+experiment_name: swin_small_baseline
+tags: ["swin", "baseline", "pretrained"]
+
+# Model configuration
+model:
+  pretrained: true
+  params:
+    drop_path_rate: 0.2  # Moderate regularization
+
+# Training configuration
+training:
+  num_epochs: 200  # Shorter for baseline
+  batch_size: 32
+  
+  optimizer:
+    lr: 0.0005  # 5e-4 is good for pretrained
+    weight_decay: 0.05
+    
+  scheduler:
+    warmup_epochs: 20
+    min_lr: 1e-6
+
+# Standard augmentation
+augmentation:
+  randaugment:
+    n: 2
+    m: 7  # Moderate strength
+  mixup:
+    alpha: 0.2  # Light mixup
+    prob: 0.25
+  cutmix:
+    enabled: false  # Disable for baseline
+
+# Monitoring
+wandb:
+  project: "thyroid-swin"
+  name: ${experiment_name}
+  tags: ${tags}
+
+# Expected performance
+expected_metrics:
+  val_acc: 0.91  # ~91% from pretrained
+  test_acc: 0.90
+  convergence_epoch: 100

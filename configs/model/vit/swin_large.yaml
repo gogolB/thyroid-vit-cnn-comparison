@@ -1,0 +1,54 @@
+# Swin-Large configuration (Blackwell GPU exclusive)
+# ~197M parameters, maximum capacity for highest accuracy
+
+name: swin_large
+type: swin
+params:
+  # Architecture parameters
+  img_size: 256
+  patch_size: 4
+  in_chans: 1  # Grayscale medical images
+  num_classes: 2
+  embed_dim: 192  # Largest embedding dimension
+  depths: [2, 2, 18, 2]
+  num_heads: [6, 12, 24, 48]  # Maximum attention heads
+  window_size: 7
+  mlp_ratio: 4.0
+  
+  # Strong regularization for very large model
+  drop_rate: 0.1
+  attn_drop_rate: 0.1  # Attention dropout
+  drop_path_rate: 0.5  # Very high stochastic depth
+  
+  # Advanced features
+  qkv_bias: true
+  qk_scale: null
+  ape: true  # Use absolute position for large model
+  patch_norm: true
+  use_checkpoint: true  # Essential for large model
+  
+  # Medical adaptations
+  medical_adaptations: true
+  quality_dim: 16  # Rich quality representation
+  
+# Pretrained weights configuration
+pretrained: true
+pretrained_cfg:
+  url: "microsoft/swin-large-patch4-window7-224"
+  num_classes: 1000
+  input_size: [3, 224, 224]
+
+# Model-specific training adjustments
+training_adjustments:
+  base_lr_scale: 0.5  # Conservative LR
+  warmup_epochs: 40  # Extended warmup
+  min_lr_ratio: 0.0001
+  layer_decay: 0.75  # Very strong layer-wise decay
+  clip_grad: 0.5  # Aggressive gradient clipping
+  
+# Blackwell GPU optimizations
+blackwell_optimizations:
+  batch_size: 128  # Large batch size
+  gradient_accumulation: 1  # No accumulation needed
+  mixed_precision: "bf16"  # Better than fp16
+  compile_model: true  # PyTorch 2.0 compilation

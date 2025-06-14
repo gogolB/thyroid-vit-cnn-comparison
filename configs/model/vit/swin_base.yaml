@@ -1,0 +1,47 @@
+# Swin-Base configuration
+# ~88M parameters, high capacity for complex patterns
+
+name: swin_base
+type: swin
+params:
+  # Architecture parameters
+  img_size: 256
+  patch_size: 4
+  in_chans: 1  # Grayscale medical images
+  num_classes: 2
+  embed_dim: 128  # Wider than small
+  depths: [2, 2, 18, 2]
+  num_heads: [4, 8, 16, 32]  # More attention heads
+  window_size: 7
+  mlp_ratio: 4.0
+  
+  # Regularization (strong for large model)
+  drop_rate: 0.1  # Add dropout
+  attn_drop_rate: 0.0
+  drop_path_rate: 0.4  # High stochastic depth
+  
+  # Advanced features
+  qkv_bias: true
+  qk_scale: null
+  ape: false
+  patch_norm: true
+  use_checkpoint: true  # Recommended for base model
+  
+  # Medical adaptations
+  medical_adaptations: true
+  quality_dim: 8  # Richer quality encoding
+  
+# Pretrained weights configuration
+pretrained: true
+pretrained_cfg:
+  url: "microsoft/swin-base-patch4-window7-224"
+  num_classes: 1000
+  input_size: [3, 224, 224]
+
+# Model-specific training adjustments
+training_adjustments:
+  base_lr_scale: 0.6  # Lower LR for large model
+  warmup_epochs: 30  # Longer warmup
+  min_lr_ratio: 0.001
+  layer_decay: 0.8  # Strong layer-wise decay
+  clip_grad: 1.0  # Gradient clipping

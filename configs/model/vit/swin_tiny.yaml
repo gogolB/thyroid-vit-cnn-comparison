@@ -1,0 +1,47 @@
+# Swin-Tiny configuration
+# ~28M parameters, designed for efficient training on small medical datasets
+
+name: swin_tiny
+type: swin
+params:
+  # Architecture parameters
+  img_size: 256
+  patch_size: 4
+  in_chans: 1  # Grayscale medical images
+  num_classes: 2
+  embed_dim: 96
+  depths: [2, 2, 6, 2]
+  num_heads: [3, 6, 12, 24]
+  window_size: 7
+  mlp_ratio: 4.0
+  
+  # Regularization
+  drop_rate: 0.0
+  attn_drop_rate: 0.0
+  drop_path_rate: 0.2  # Stochastic depth
+  
+  # Advanced features
+  qkv_bias: true
+  qk_scale: null  # Use default sqrt(head_dim)
+  ape: false  # No absolute position embedding (relative is enough)
+  patch_norm: true
+  use_checkpoint: false  # Enable for memory savings
+  
+  # Medical adaptations
+  medical_adaptations: true
+  quality_dim: 4
+  
+# Pretrained weights configuration
+pretrained: true
+pretrained_cfg:
+  url: "microsoft/swin-tiny-patch4-window7-224"
+  num_classes: 1000
+  input_size: [3, 224, 224]
+  # Weights will be adapted for grayscale 256x256
+
+# Model-specific training adjustments
+training_adjustments:
+  base_lr_scale: 1.0  # Standard learning rate
+  warmup_epochs: 20
+  min_lr_ratio: 0.01
+  layer_decay: 0.9  # Layer-wise LR decay for Swin

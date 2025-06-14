@@ -66,13 +66,16 @@ class ThyroidDistillationModule(pl.LightningModule):
                 200: 0.5
             })
         
-        # Log configuration
+        # Log numeric configuration values only
+        # String values are saved via save_hyperparameters() for W&B
         self.log_dict({
-            'config/student_model': config.model.name,
-            'config/teacher_type': config.distillation.teacher_model_type,
             'config/alpha': config.distillation.alpha,
             'config/temperature': config.distillation.temperature,
         }, on_epoch=False, on_step=False)
+        
+        # Print configuration info (will be captured by W&B logs)
+        print(f"Distillation Config - Student: {config.model.name}, "
+              f"Teacher: {config.distillation.teacher_model_type}")
     
     def _create_student_model(self) -> nn.Module:
         """Create the student model (DeiT with distillation support)."""
@@ -338,101 +341,91 @@ class ThyroidDistillationModule(pl.LightningModule):
     
     def configure_optimizers(self):
         """Configure optimizer and scheduler for distillation."""
-        # Get optimizer config - check multiple locations
-        opt_config = None
-        if hasattr(self.config, 'optimizer') and self.config.optimizer is not None:
-            opt_config = self.config.optimizer
-        elif hasattr(self.config, 'training') and hasattr(self.config.training, 'optimizer'):
-            opt_config = self.config.training.optimizer
+        # Get optimizer config from training configuration
+        training_cfg = self.config.training
+        opt_cfg = training_cfg.optimizer
         
-        if opt_config is None:
-            # Default optimizer if not specified
+        # Layer-wise learning rate decay for ViT
+        base_lr = opt_cfg.get('lr', opt_cfg.get('learning_rate', 0.001))
+        if hasattr(self.student, 'get_parameter_groups'):
+            param_groups = self.student.get_parameter_groups(
+                weight_decay=opt_cfg.get('weight_decay', 0.05),
+                layer_decay=opt_cfg.get('layer_decay', 0.75)
+            )
+            # Apply the base learning rate to each group
+            for group in param_groups:
+                if 'lr_scale' in group:
+                    group['lr'] = base_lr * group['lr_scale']
+                else:
+                    group['lr'] = base_lr
+        else:
+            param_groups = self.student.parameters()
+        
+        # Create optimizer
+        if opt_cfg.get('_target_', '').endswith('AdamW') or opt_cfg.get('name', '').lower() == 'adamw':
             optimizer = torch.optim.AdamW(
-                self.student.parameters(),
-                lr=0.0005,
-                weight_decay=0.05
+                param_groups,
+                lr=opt_cfg.get('lr', opt_cfg.get('learning_rate', 0.001)),
+                betas=tuple(opt_cfg.get('betas', [0.9, 0.999])),
+                weight_decay=opt_cfg.get('weight_decay', 0.05)
+            )
+        elif opt_cfg.get('_target_', '').endswith('Adam') or opt_cfg.get('name', '').lower() == 'adam':
+            optimizer = torch.optim.Adam(
+                param_groups,
+                lr=opt_cfg.get('lr', opt_cfg.get('learning_rate', 0.001)),
+                betas=tuple(opt_cfg.get('betas', [0.9, 0.999])),
+                weight_decay=opt_cfg.get('weight_decay', 0.0)
             )
         else:
-            # Filter student parameters only
-            student_params = self.student.parameters()
-            
-            # Create optimizer based on config
-            if opt_config.get('_target_', '').endswith('AdamW'):
-                optimizer = torch.optim.AdamW(
-                    student_params,
-                    lr=opt_config.get('lr', 0.0005),
-                    weight_decay=opt_config.get('weight_decay', 0.05),
-                    betas=opt_config.get('betas', [0.9, 0.999])
-                )
-            else:
-                # Default to AdamW
-                optimizer = torch.optim.AdamW(
-                    student_params,
-                    lr=0.0005,
-                    weight_decay=0.05
-                )
+            raise ValueError(f"Unknown optimizer: {opt_cfg.get('_target_', opt_cfg.get('name', 'unknown'))}")
         
-        # Get scheduler config
-        scheduler_config = None
-        if hasattr(self.config, 'scheduler') and self.config.scheduler is not None:
-            scheduler_config = self.config.scheduler
-        elif hasattr(self.config, 'training') and hasattr(self.config.training, 'scheduler'):
-            scheduler_config = self.config.training.scheduler
+        # Create scheduler if specified
+        scheduler_cfg = training_cfg.scheduler
         
-        # Handle warmup
-        warmup_epochs = 0
-        if hasattr(self.config, 'warmup_epochs'):
-            warmup_epochs = self.config.warmup_epochs
-        elif hasattr(self.config, 'training') and hasattr(self.config.training, 'warmup_epochs'):
-            warmup_epochs = self.config.training.warmup_epochs
-        elif scheduler_config and 'warmup_epochs' in scheduler_config:
-            warmup_epochs = scheduler_config.get('warmup_epochs', 0)
-        
-        if scheduler_config and warmup_epochs > 0:
-            # Create warmup scheduler
-            from torch.optim.lr_scheduler import LambdaLR, CosineAnnealingLR
-            
-            def warmup_lambda(epoch):
-                if epoch < warmup_epochs:
-                    return float(epoch) / float(max(1, warmup_epochs))
-                return 1.0
-            
-            warmup_scheduler = LambdaLR(optimizer, lr_lambda=warmup_lambda)
-            
-            # Main scheduler after warmup
-            main_scheduler = CosineAnnealingLR(
-                optimizer,
-                T_max=scheduler_config.T_max - warmup_epochs,
-                eta_min=scheduler_config.eta_min
-            )
-            
-            # Combine schedulers
-            scheduler = {
-                'scheduler': warmup_scheduler,
-                'name': 'warmup_lr',
-                'interval': 'epoch',
-                'frequency': 1
-            }
-        else:
+        if scheduler_cfg.get('_target_', '').endswith('CosineAnnealingLR') or scheduler_cfg.get('name', '') == 'cosine':
+            from torch.optim.lr_scheduler import CosineAnnealingLR
             scheduler = CosineAnnealingLR(
                 optimizer,
-                T_max=scheduler_config.T_max,
-                eta_min=scheduler_config.eta_min
+                T_max=scheduler_cfg.get('T_max', training_cfg.num_epochs),
+                eta_min=scheduler_cfg.get('eta_min', scheduler_cfg.get('min_lr', 1e-6))
             )
-            scheduler = {
-                'scheduler': scheduler,
-                'name': 'cosine_lr',
-                'interval': 'epoch',
-                'frequency': 1
-            }
+        elif scheduler_cfg.get('name', '') == 'cosine_warmup':
+            try:
+                from src.utils.schedulers import CosineWarmupScheduler
+                scheduler = CosineWarmupScheduler(
+                    optimizer,
+                    warmup_epochs=scheduler_cfg.get('warmup_epochs', 5),
+                    max_epochs=training_cfg.num_epochs,
+                    min_lr=scheduler_cfg.get('min_lr', 1e-6)
+                )
+            except ImportError:
+                # Fallback to cosine annealing without warmup
+                from torch.optim.lr_scheduler import CosineAnnealingLR
+                scheduler = CosineAnnealingLR(
+                    optimizer,
+                    T_max=training_cfg.num_epochs,
+                    eta_min=scheduler_cfg.get('min_lr', 1e-6)
+                )
+        else:
+            # Default to cosine annealing
+            from torch.optim.lr_scheduler import CosineAnnealingLR
+            scheduler = CosineAnnealingLR(
+                optimizer,
+                T_max=training_cfg.num_epochs,
+                eta_min=1e-6
+            )
         
         return {
             'optimizer': optimizer,
-            'lr_scheduler': scheduler
+            'lr_scheduler': {
+                'scheduler': scheduler,
+                'interval': 'epoch',
+                'frequency': 1
+            }
         }
     
     def on_save_checkpoint(self, checkpoint: Dict[str, Any]) -> None:
-        """Save additional distillation information to checkpoint."""
+        """Save distillation-specific information to checkpoint."""
         checkpoint['distillation_config'] = OmegaConf.to_container(
             self.config.distillation, resolve=True
         )

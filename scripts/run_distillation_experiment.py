@@ -292,7 +292,7 @@ class DistillationExperimentRunner:
                     wandb_logger = WandbLogger(
                         project=cfg.wandb.get('project', 'thyroid-distillation'),
                         name=experiment_name,
-                        tags=['distillation', student_model, 'phase3'],
+                        tags=['distillation', cfg.model.name, 'phase3'],
                         config=OmegaConf.to_container(cfg, resolve=True)
                     )
                 except Exception as e:
@@ -335,6 +335,35 @@ class DistillationExperimentRunner:
                 val_dataloaders=data_loaders['val']
             )
             
+            # Get best validation accuracy from checkpoint callback
+            best_val_acc = 0.0
+            if hasattr(checkpoint_callback, 'best_model_score') and checkpoint_callback.best_model_score is not None:
+                best_val_acc = float(checkpoint_callback.best_model_score)
+                # Handle negative values (PyTorch Lightning sometimes stores negative for max metrics)
+                if checkpoint_callback.mode == 'max' and best_val_acc < 0:
+                    best_val_acc = -best_val_acc
+            elif hasattr(checkpoint_callback, 'best_k_models') and checkpoint_callback.best_k_models:
+                # Get the best score from the best_k_models dict
+                scores = list(checkpoint_callback.best_k_models.values())
+                if checkpoint_callback.mode == 'max':
+                    # For max mode, scores might be stored as negative
+                    best_val_acc = -min(scores) if all(s < 0 for s in scores) else max(scores)
+                else:
+                    best_val_acc = min(scores)
+            else:
+                # Try to get from callback metrics
+                best_val_acc = float(trainer.callback_metrics.get('val_acc', 0.0))
+            
+            # Debug: print available metrics
+            console.print(f"[dim]Available metrics: {list(trainer.callback_metrics.keys())}[/dim]")
+            console.print(f"[dim]Best validation accuracy: {best_val_acc:.4f}[/dim]")
+            
+            # Get teacher agreement from last validation
+            teacher_agreement = float(trainer.callback_metrics.get('val_teacher_agreement', 0.0))
+            if teacher_agreement == 0.0:
+                # Try regular teacher_agreement metric
+                teacher_agreement = float(trainer.callback_metrics.get('teacher_agreement', 0.0))
+            
             # Test
             console.print("\n[cyan]Running test evaluation...[/cyan]")
             test_results = trainer.test(
@@ -344,21 +373,32 @@ class DistillationExperimentRunner:
             )
             
             # Extract results
+            best_epoch = trainer.current_epoch  # Default to last epoch
+            if hasattr(checkpoint_callback, 'best_epoch'):
+                best_epoch = checkpoint_callback.best_epoch
+            elif hasattr(checkpoint_callback, 'best_model_path') and checkpoint_callback.best_model_path:
+                # Try to extract epoch from checkpoint filename
+                import re
+                match = re.search(r'epoch=(\d+)', checkpoint_callback.best_model_path)
+                if match:
+                    best_epoch = int(match.group(1))
+            
             result = {
                 'experiment_name': experiment_name,
                 'student_model': cfg.model.name,
-                'teacher_checkpoint': getattr(cfg.distillation, 'teacher_checkpoint', teacher_checkpoint),
+                'teacher_checkpoint': cfg.distillation.teacher_checkpoint,
                 'status': 'success',
-                'val_acc': float(trainer.callback_metrics.get('val_acc', 0)),
+                'val_acc': best_val_acc,
                 'test_acc': float(test_results[0].get('test_acc', 0)),
-                'best_epoch': trainer.current_epoch,
-                'teacher_agreement': float(trainer.callback_metrics.get('teacher_agreement', 0)),
+                'best_epoch': best_epoch,
+                'teacher_agreement': teacher_agreement,
                 'final_alpha': model.get_current_alpha() if hasattr(model, 'get_current_alpha') else getattr(cfg.distillation, 'alpha', 0.5),
             }
             
             console.print(f"[green]✓ Experiment completed successfully[/green]")
             console.print(f"  Test accuracy: {result['test_acc']:.4f}")
-            console.print(f"  Teacher agreement: {result['teacher_agreement']:.4f}")
+            if result['teacher_agreement'] > 0:
+                console.print(f"  Teacher agreement: {result['teacher_agreement']:.4f}")
             
             return result
             

@@ -105,7 +105,7 @@ def test_ensemble(cfg: DictConfig):
     console.print(f"Test samples: {len(test_loader.dataset)}")
     
     # Define checkpoint paths (update these with actual paths)
-    checkpoint_dir = Path('checkpoints')
+    checkpoint_dir = Path('checkpoints/best')
     checkpoint_paths = {}
     
     # Look for actual checkpoints

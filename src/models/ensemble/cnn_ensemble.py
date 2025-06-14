@@ -87,7 +87,7 @@ class ThyroidCNNEnsemble(pl.LightningModule):
             try:
                 # Load the Lightning module
                 if 'resnet' in model_name:
-                    model = ResNet18Lightning.load_from_checkpoint(
+                    model = ThyroidCNNModule.load_from_checkpoint(
                         ckpt_path,
                         map_location=device_type
                     )
@@ -188,14 +188,14 @@ class ThyroidCNNEnsemble(pl.LightningModule):
         outputs = self(x)
         ensemble_probs = outputs['probs']
         ensemble_preds = ensemble_probs.argmax(dim=1)
-        
+                
         # Metrics
-        self.test_acc(ensemble_preds, y)
+        self.test_acc(ensemble_probs, y)
         if self.hparams.num_classes == 2:
-            self.test_auc(ensemble_probs[:, 1], y)
-        else:
             self.test_auc(ensemble_probs, y)
-        self.test_f1(ensemble_preds, y)
+        else:
+            self.test_auc(ensemble_probs, y)        
+        self.test_f1(ensemble_probs, y)
         
         # Log individual model performances
         for name in self.models.keys():

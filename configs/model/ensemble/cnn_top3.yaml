@@ -4,9 +4,9 @@ _target_: src.models.ensemble.cnn_ensemble.ThyroidCNNEnsemble
 
 # Model checkpoints to include
 checkpoint_paths:
-  resnet50: ${paths.checkpoint_dir}/resnet50-best.ckpt
-  efficientnet_b0: ${paths.checkpoint_dir}/efficientnet_b0-best.ckpt
-  densenet121: ${paths.checkpoint_dir}/densenet121-best.ckpt
+  resnet50: ${paths.checkpoint_dir}/best/resnet50-best.ckpt
+  efficientnet_b0: ${paths.checkpoint_dir}/best/efficientnet_b0-best.ckpt
+  densenet121: ${paths.checkpoint_dir}/best/densenet121-best.ckpt
 
 # Ensemble configuration
 num_classes: 2

@@ -2,6 +2,11 @@
 """
 Generate confusion matrices and ROC curves for best models.
 Saves visualizations to visualizations/ppt-report/
+
+Fixed version that:
+- Uses Lightning module loading (train_cnn.py and train_vit.py)
+- Properly handles model outputs from Lightning modules
+- Adds extensive debugging to diagnose prediction issues
 """
 
 import sys
@@ -21,8 +26,10 @@ sys.path.append(str(Path(__file__).parent.parent))
 from src.data.dataset import CARSThyroidDataset
 from src.data.transforms import get_validation_transforms
 from torch.utils.data import DataLoader
-import pytorch_lightning as pl
 from rich.console import Console
+
+# Import our model loading utilities
+from scripts.model_loader_utils import load_model_from_checkpoint, get_model_output, debug_model_output
 
 console = Console()
 
@@ -31,77 +38,33 @@ MODELS = {
     'swin_tiny': {
         'checkpoint': 'checkpoints/best/swin_tiny-best.ckpt',
         'accuracy': 94.12,
-        'type': 'vit'
+        'type': 'vit',
+        'image_size': 224  # Swin uses 224
     },
     'resnet50': {
         'checkpoint': 'checkpoints/best/resnet50-best.ckpt',
         'accuracy': 91.18,
-        'type': 'cnn'
+        'type': 'cnn',
+        'image_size': 256
     },
     'efficientnet_b0': {
         'checkpoint': 'checkpoints/best/efficientnet_b0-best.ckpt',
         'accuracy': 89.71,
-        'type': 'cnn'
+        'type': 'cnn',
+        'image_size': 256
     }
 }
 
-def load_model_from_checkpoint(checkpoint_path):
-    """Load a model from checkpoint."""
-    console.print(f"[cyan]Loading model from {checkpoint_path}...[/cyan]")
-    
-    try:
-        # Load the checkpoint
-        checkpoint = torch.load(checkpoint_path, map_location='cpu')
-        
-        # Try to extract the model class from the checkpoint
-        if 'hyper_parameters' in checkpoint:
-            model_name = checkpoint['hyper_parameters'].get('model', {}).get('name', '')
-            
-            # Import the appropriate model class
-            if 'swin' in model_name:
-                from src.models.vit.swin_transformer import SwinTransformer
-                model_class = SwinTransformer
-            elif 'resnet' in model_name:
-                from src.models.cnn.resnet import ResNet50
-                model_class = ResNet50
-            elif 'efficientnet' in model_name:
-                from src.models.cnn.efficientnet import EfficientNetB0
-                model_class = EfficientNetB0
-            else:
-                raise ValueError(f"Unknown model type: {model_name}")
-        
-        # Load using PyTorch Lightning
-        model = model_class.load_from_checkpoint(checkpoint_path)
-        model.eval()
-        
-        console.print(f"[green]✓ Successfully loaded {model_name}[/green]")
-        return model
-        
-    except Exception as e:
-        console.print(f"[red]Error loading model: {e}[/red]")
-        console.print("[yellow]Attempting alternative loading method...[/yellow]")
-        
-        # Alternative: try loading the LightningModule directly
-        try:
-            from src.training.lightning_module import ThyroidClassificationModule
-            model = ThyroidClassificationModule.load_from_checkpoint(checkpoint_path)
-            model.eval()
-            console.print("[green]✓ Successfully loaded using LightningModule[/green]")
-            return model
-        except Exception as e2:
-            console.print(f"[red]Alternative loading failed: {e2}[/red]")
-            return None
 
-
-def get_test_dataloader(batch_size=32):
-    """Create test dataloader."""
-    transform = get_validation_transforms(target_size=224, normalize=True)
+def get_test_dataloader(batch_size=32, target_size=256):
+    """Create test dataloader with specified target size."""
+    transform = get_validation_transforms(target_size=target_size, normalize=True)
     
     dataset = CARSThyroidDataset(
         root_dir='data/raw',
         split='test',
         transform=transform,
-        target_size=224,
+        target_size=target_size,
         normalize=True,
         patient_level_split=False
     )
@@ -119,228 +82,281 @@ def get_test_dataloader(batch_size=32):
 
 
 def generate_predictions(model, dataloader, device='cuda' if torch.cuda.is_available() else 'cpu'):
-    """Generate predictions for the entire test set."""
+    """
+    Generate predictions for the entire test set.
+    Handles both Lightning modules and raw models properly.
+    """
+    # Move model to device (handles both Lightning modules and raw models)
     model = model.to(device)
-    model.eval()
+    model.eval()  # Ensure eval mode
     
     all_preds = []
     all_labels = []
     all_probs = []
     
+    # Check first batch to debug
+    first_batch = True
+    
     with torch.no_grad():
-        for batch in tqdm(dataloader, desc="Generating predictions"):
-            images, labels = batch
+        for images, labels in tqdm(dataloader, desc="Generating predictions"):
             images = images.to(device)
             
-            # Get model outputs
-            outputs = model(images)
+            # Get model outputs using helper function
+            logits = get_model_output(model, images)
             
-            # Handle different output formats
-            if isinstance(outputs, dict):
-                logits = outputs.get('logits', outputs.get('output', outputs))
+            # Debug first batch
+            if first_batch:
+                console.print(f"\n[dim]First batch debug:[/dim]")
+                console.print(f"  Input shape: {images.shape}")
+                console.print(f"  Logits shape: {logits.shape}")
+                console.print(f"  Logits range: [{logits.min():.3f}, {logits.max():.3f}]")
+                console.print(f"  Labels: {labels.tolist()}")
+                first_batch = False
+            
+            # Ensure logits are 2D [batch_size, num_classes]
+            if logits.dim() == 1:
+                # Single output neuron for binary classification
+                # Convert to two-class format
+                probs_pos = torch.sigmoid(logits)
+                probs_neg = 1 - probs_pos
+                probs = torch.stack([probs_neg, probs_pos], dim=1)
+                preds = (probs_pos > 0.5).long()
             else:
-                logits = outputs
-            
-            # Get probabilities and predictions
-            probs = F.softmax(logits, dim=1)
-            preds = torch.argmax(logits, dim=1)
+                # Standard multi-class output
+                probs = F.softmax(logits, dim=1)
+                preds = torch.argmax(logits, dim=1)
+                
+                # Debug predictions
+                if len(all_preds) == 0:
+                    console.print(f"  Predictions: {preds.tolist()}")
+                    console.print(f"  Probabilities: {probs[0].tolist()}")
             
             all_preds.extend(preds.cpu().numpy())
             all_labels.extend(labels.numpy())
             all_probs.extend(probs.cpu().numpy())
+    
+    # Check prediction distribution
+    unique_preds, counts = np.unique(all_preds, return_counts=True)
+    console.print(f"\n[dim]Prediction distribution:[/dim]")
+    for pred, count in zip(unique_preds, counts):
+        console.print(f"  Class {pred}: {count} ({count/len(all_preds)*100:.1f}%)")
     
     return np.array(all_preds), np.array(all_labels), np.array(all_probs)
 
 
 def plot_confusion_matrix(y_true, y_pred, model_name, save_path):
     """Plot and save confusion matrix."""
+    plt.figure(figsize=(8, 6))
+    
+    # Compute confusion matrix
     cm = confusion_matrix(y_true, y_pred)
     
-    plt.figure(figsize=(8, 6))
+    # Plot
     sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', 
                 xticklabels=['Normal', 'Cancerous'],
                 yticklabels=['Normal', 'Cancerous'],
-                annot_kws={'size': 16})
+                cbar_kws={'label': 'Count'})
     
-    plt.title(f'Confusion Matrix - {model_name}', fontsize=16, fontweight='bold')
-    plt.ylabel('True Label', fontsize=14)
-    plt.xlabel('Predicted Label', fontsize=14)
+    plt.title(f'Confusion Matrix - {model_name}', fontsize=16)
+    plt.ylabel('True Label', fontsize=12)
+    plt.xlabel('Predicted Label', fontsize=12)
     
     # Add accuracy text
-    accuracy = np.sum(np.diag(cm)) / np.sum(cm) * 100
-    plt.text(0.5, -0.1, f'Accuracy: {accuracy:.2f}%', 
-             ha='center', va='top', transform=plt.gca().transAxes,
-             fontsize=14, fontweight='bold')
+    accuracy = np.sum(y_pred == y_true) / len(y_true)
+    plt.text(0.5, -0.15, f'Accuracy: {accuracy:.2%}', 
+             ha='center', transform=plt.gca().transAxes, fontsize=12)
     
     plt.tight_layout()
     plt.savefig(save_path, dpi=300, bbox_inches='tight')
     plt.close()
     
-    console.print(f"[green]✓ Saved confusion matrix to {save_path}[/green]")
-    return cm
+    console.print(f"[green]✓ Saved confusion matrix: {save_path}[/green]")
 
 
 def plot_roc_curve(y_true, y_probs, model_name, save_path):
     """Plot and save ROC curve."""
-    # Get probabilities for positive class (cancerous)
-    y_score = y_probs[:, 1]
+    plt.figure(figsize=(8, 6))
     
-    fpr, tpr, _ = roc_curve(y_true, y_score)
+    # Ensure y_probs is 2D
+    if y_probs.ndim == 1:
+        # Single probability output
+        y_probs_positive = y_probs
+    else:
+        # Use probability of positive class (cancerous)
+        y_probs_positive = y_probs[:, 1]
+    
+    # Compute ROC curve
+    fpr, tpr, _ = roc_curve(y_true, y_probs_positive)
     roc_auc = auc(fpr, tpr)
     
-    plt.figure(figsize=(8, 6))
-    plt.plot(fpr, tpr, color='darkorange', lw=3, 
-             label=f'ROC curve (AUC = {roc_auc:.3f})')
-    plt.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--', label='Random')
+    # Plot
+    plt.plot(fpr, tpr, 'b-', linewidth=2, 
+             label=f'{model_name} (AUC = {roc_auc:.3f})')
+    plt.plot([0, 1], [0, 1], 'k--', linewidth=1, label='Random Classifier')
     
     plt.xlim([0.0, 1.0])
     plt.ylim([0.0, 1.05])
-    plt.xlabel('False Positive Rate', fontsize=14)
-    plt.ylabel('True Positive Rate', fontsize=14)
-    plt.title(f'ROC Curve - {model_name}', fontsize=16, fontweight='bold')
-    plt.legend(loc="lower right", fontsize=12)
+    plt.xlabel('False Positive Rate', fontsize=12)
+    plt.ylabel('True Positive Rate', fontsize=12)
+    plt.title(f'ROC Curve - {model_name}', fontsize=16)
+    plt.legend(loc="lower right", fontsize=11)
     plt.grid(True, alpha=0.3)
     
     plt.tight_layout()
     plt.savefig(save_path, dpi=300, bbox_inches='tight')
     plt.close()
     
-    console.print(f"[green]✓ Saved ROC curve to {save_path}[/green]")
-    return roc_auc
+    console.print(f"[green]✓ Saved ROC curve: {save_path}[/green]")
 
 
-def generate_classification_report(y_true, y_pred, model_name, save_path):
-    """Generate and save classification report."""
-    report = classification_report(y_true, y_pred, 
-                                 target_names=['Normal', 'Cancerous'],
-                                 output_dict=True)
+def plot_combined_roc_curves(all_results, save_path):
+    """Plot all ROC curves on one figure."""
+    plt.figure(figsize=(10, 8))
     
-    # Save as JSON
-    with open(save_path, 'w') as f:
-        json.dump(report, f, indent=2)
+    colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd']
     
-    # Also create a text version
-    report_text = classification_report(y_true, y_pred, 
-                                      target_names=['Normal', 'Cancerous'])
+    for idx, (model_name, results) in enumerate(all_results.items()):
+        if results is None:
+            continue
+            
+        y_true = results['labels']
+        y_probs = results['probs']
+        
+        # Handle different probability formats
+        if y_probs.ndim == 1:
+            y_probs_positive = y_probs
+        else:
+            y_probs_positive = y_probs[:, 1]
+        
+        fpr, tpr, _ = roc_curve(y_true, y_probs_positive)
+        roc_auc = auc(fpr, tpr)
+        
+        plt.plot(fpr, tpr, color=colors[idx % len(colors)], 
+                linewidth=2, label=f'{model_name} (AUC = {roc_auc:.3f})')
     
-    text_path = save_path.replace('.json', '.txt')
-    with open(text_path, 'w') as f:
-        f.write(f"Classification Report - {model_name}\n")
-        f.write("="*50 + "\n\n")
-        f.write(report_text)
+    plt.plot([0, 1], [0, 1], 'k--', linewidth=1, label='Random Classifier')
     
-    console.print(f"[green]✓ Saved classification report to {save_path}[/green]")
-    return report
-
-
-def create_comparison_plot(all_results, save_path):
-    """Create a comparison plot of all models."""
-    models = list(all_results.keys())
-    accuracies = [all_results[m]['accuracy'] for m in models]
-    aucs = [all_results[m]['auc'] for m in models]
-    
-    x = np.arange(len(models))
-    width = 0.35
-    
-    fig, ax = plt.subplots(figsize=(10, 6))
-    
-    bars1 = ax.bar(x - width/2, accuracies, width, label='Accuracy', color='skyblue')
-    bars2 = ax.bar(x + width/2, [a*100 for a in aucs], width, label='AUC×100', color='lightcoral')
-    
-    ax.set_xlabel('Model', fontsize=14)
-    ax.set_ylabel('Score (%)', fontsize=14)
-    ax.set_title('Model Performance Comparison', fontsize=16, fontweight='bold')
-    ax.set_xticks(x)
-    ax.set_xticklabels([m.replace('_', ' ').title() for m in models])
-    ax.legend(fontsize=12)
-    ax.grid(True, alpha=0.3, axis='y')
-    
-    # Add value labels on bars
-    for bars in [bars1, bars2]:
-        for bar in bars:
-            height = bar.get_height()
-            ax.annotate(f'{height:.1f}',
-                       xy=(bar.get_x() + bar.get_width() / 2, height),
-                       xytext=(0, 3),
-                       textcoords="offset points",
-                       ha='center', va='bottom',
-                       fontsize=10)
+    plt.xlim([0.0, 1.0])
+    plt.ylim([0.0, 1.05])
+    plt.xlabel('False Positive Rate', fontsize=12)
+    plt.ylabel('True Positive Rate', fontsize=12)
+    plt.title('ROC Curves - Model Comparison', fontsize=16)
+    plt.legend(loc="lower right", fontsize=11)
+    plt.grid(True, alpha=0.3)
     
     plt.tight_layout()
     plt.savefig(save_path, dpi=300, bbox_inches='tight')
     plt.close()
     
-    console.print(f"[green]✓ Saved comparison plot to {save_path}[/green]")
+    console.print(f"[green]✓ Saved combined ROC curves: {save_path}[/green]")
 
 
 def main():
-    """Main function to generate all visualizations."""
+    """Main function to generate confusion matrices and ROC curves."""
     # Create output directory
     output_dir = Path('visualizations/ppt-report')
     output_dir.mkdir(parents=True, exist_ok=True)
     
     console.print("[bold cyan]Generating Confusion Matrices and ROC Curves[/bold cyan]\n")
     
-    # Load test dataloader
-    test_dataloader = get_test_dataloader()
-    
-    # Store results for comparison
+    # Store results for combined plot
     all_results = {}
     
+    # Set device
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    console.print(f"[dim]Using device: {device}[/dim]\n")
+    
     # Process each model
-    for model_name, model_info in MODELS.items():
-        console.print(f"\n[bold yellow]Processing {model_name}...[/bold yellow]")
+    for model_name, config in MODELS.items():
+        console.print(f"\n[cyan]Processing {model_name}...[/cyan]")
         
-        checkpoint_path = Path(model_info['checkpoint'])
+        # Check if checkpoint exists
+        checkpoint_path = Path(config['checkpoint'])
         if not checkpoint_path.exists():
-            console.print(f"[red]Checkpoint not found: {checkpoint_path}[/red]")
+            console.print(f"[yellow]Checkpoint not found: {checkpoint_path}[/yellow]")
+            console.print("[yellow]Skipping this model[/yellow]")
+            all_results[model_name] = None
             continue
         
-        # Load model
-        model = load_model_from_checkpoint(checkpoint_path)
+        # Load model using our improved utility
+        model = load_model_from_checkpoint(checkpoint_path, device=device, verbose=True)
+        
         if model is None:
+            console.print(f"[yellow]Skipping {model_name} due to loading error[/yellow]")
+            all_results[model_name] = None
             continue
+        
+        # Debug model output on a sample batch
+        console.print("\n[cyan]Debugging model output...[/cyan]")
+        sample_batch = torch.randn(2, 1, config['image_size'], config['image_size']).to(device)
+        debug_model_output(model, sample_batch, model_name)
+        
+        # Get test dataloader with appropriate image size
+        image_size = config.get('image_size', 256)
+        console.print(f"[dim]Using image size: {image_size}x{image_size}[/dim]")
+        test_loader = get_test_dataloader(target_size=image_size)
         
         # Generate predictions
-        y_pred, y_true, y_probs = generate_predictions(model, test_dataloader)
-        
-        # Create visualizations
-        cm = plot_confusion_matrix(
-            y_true, y_pred, model_name,
-            output_dir / f'confusion_matrix_{model_name}.png'
-        )
-        
-        roc_auc = plot_roc_curve(
-            y_true, y_probs, model_name,
-            output_dir / f'roc_curve_{model_name}.png'
-        )
-        
-        report = generate_classification_report(
-            y_true, y_pred, model_name,
-            output_dir / f'classification_report_{model_name}.json'
-        )
-        
-        # Calculate accuracy from confusion matrix
-        accuracy = np.sum(np.diag(cm)) / np.sum(cm) * 100
+        preds, labels, probs = generate_predictions(model, test_loader, device)
         
         # Store results
         all_results[model_name] = {
-            'accuracy': accuracy,
-            'auc': roc_auc,
-            'precision': report['weighted avg']['precision'],
-            'recall': report['weighted avg']['recall'],
-            'f1': report['weighted avg']['f1-score']
+            'preds': preds,
+            'labels': labels,
+            'probs': probs
         }
         
-        console.print(f"[green]✓ Completed {model_name}: Acc={accuracy:.2f}%, AUC={roc_auc:.3f}[/green]")
-    
-    # Create comparison plot
-    if all_results:
-        create_comparison_plot(all_results, output_dir / 'model_comparison.png')
+        # Calculate metrics
+        accuracy = np.sum(preds == labels) / len(labels)
+        console.print(f"[green]Test Accuracy: {accuracy:.4f}[/green]")
         
-        # Save summary results
-        with open(output_dir / 'results_summary.json', 'w') as f:
-            json.dump(all_results, f, indent=2)
+        # Plot confusion matrix
+        cm_path = output_dir / f'confusion_matrix_{model_name}.png'
+        plot_confusion_matrix(labels, preds, model_name, cm_path)
+        
+        # Plot individual ROC curve
+        roc_path = output_dir / f'roc_curve_{model_name}.png'
+        plot_roc_curve(labels, probs, model_name, roc_path)
+        
+        # Print classification report
+        console.print(f"\n[cyan]Classification Report - {model_name}:[/cyan]")
+        report = classification_report(labels, preds, 
+                                     target_names=['Normal', 'Cancerous'],
+                                     digits=4)
+        console.print(report)
+    
+    # Generate combined ROC curve if we have any results
+    valid_results = {k: v for k, v in all_results.items() if v is not None}
+    if valid_results:
+        console.print("\n[cyan]Generating combined ROC curve...[/cyan]")
+        combined_roc_path = output_dir / 'roc_curves_comparison.png'
+        plot_combined_roc_curves(valid_results, combined_roc_path)
+    
+    # Save numerical results
+    results_summary = {}
+    for model_name, results in all_results.items():
+        if results is None:
+            continue
+            
+        accuracy = np.sum(results['preds'] == results['labels']) / len(results['labels'])
+        cm = confusion_matrix(results['labels'], results['preds'])
+        
+        # Calculate per-class metrics
+        tn, fp, fn, tp = cm.ravel()
+        sensitivity = tp / (tp + fn) if (tp + fn) > 0 else 0
+        specificity = tn / (tn + fp) if (tn + fp) > 0 else 0
+        
+        results_summary[model_name] = {
+            'accuracy': float(accuracy),
+            'sensitivity': float(sensitivity),
+            'specificity': float(specificity),
+            'total_samples': len(results['labels']),
+            'confusion_matrix': cm.tolist()
+        }
+    
+    # Save results summary
+    with open(output_dir / 'results_summary.json', 'w') as f:
+        json.dump(results_summary, f, indent=2)
     
     console.print("\n[bold green]✓ All visualizations generated successfully![/bold green]")
     console.print(f"[cyan]Results saved to: {output_dir}[/cyan]")

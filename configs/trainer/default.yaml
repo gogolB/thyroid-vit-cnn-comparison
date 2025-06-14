@@ -28,9 +28,6 @@ enable_checkpointing: true
 enable_progress_bar: true
 enable_model_summary: true
 
-# Progress bar settings
-progress_bar_refresh_rate: 1  # Update every batch
-
 # Development/debugging
 fast_dev_run: false
 overfit_batches: 0.0

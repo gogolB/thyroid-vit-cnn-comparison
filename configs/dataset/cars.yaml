@@ -1,5 +1,5 @@
 name: CARS_Thyroid
-path: "${paths.data_dir}/raw"
+path: "data/raw"  # Direct path instead of interpolation
 image_size: 256
 patch_size: 256
 patch_overlap: 0.1

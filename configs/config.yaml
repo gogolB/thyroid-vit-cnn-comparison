@@ -3,17 +3,18 @@ defaults:
   - dataset: cars
   - training: standard
   - augmentation: basic
-  - trainer: default  # Add trainer configuration
+  - trainer: default
   - _self_
 
 experiment_name: "${model.name}_${dataset.name}_${now:%Y-%m-%d_%H-%M-%S}"
 seed: 42
-device: auto  # Changed from cuda to auto for MPS support
+device: auto
 
+# Use simple relative paths instead of Hydra interpolations
 paths:
-  data_dir: "${hydra:runtime.cwd}/data"
-  log_dir: "${hydra:runtime.cwd}/logs"
-  checkpoint_dir: "${hydra:runtime.cwd}/checkpoints"
+  data_dir: "data"
+  log_dir: "logs"
+  checkpoint_dir: "checkpoints"
 
 wandb:
   project: "thyroid-classification"

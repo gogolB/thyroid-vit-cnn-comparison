@@ -242,9 +242,51 @@ class UnifiedExperimentRunner:
         device = get_device()
         console.print(f"[cyan]Using device: {device}[/cyan]")
         
-        # Create data loaders
+        # Create data loaders with proper transforms
         console.print("[yellow]Creating data loaders...[/yellow]")
-        train_loader, val_loader, test_loader = create_data_loaders(cfg)
+        
+        # Get transforms
+        quality_report_path = Path(cfg.paths.data_dir).parent / 'reports' / 'quality_report.json'
+        
+        if cfg.model.get('quality_aware', True) and quality_report_path.exists():
+            console.print("[cyan]Using quality-aware preprocessing[/cyan]")
+            quality_path = quality_report_path
+        else:
+            console.print("[yellow]Quality-aware preprocessing disabled or report not found[/yellow]")
+            quality_path = None
+        
+        # Get augmentation level from config
+        augmentation_level = cfg.training.get('augmentation_level', 'medium')
+        
+        train_transform = create_quality_aware_transform(
+            target_size=cfg.dataset.image_size,
+            quality_report_path=quality_path,
+            augmentation_level=augmentation_level,
+            split='train'
+        )
+        
+        val_transform = create_quality_aware_transform(
+            target_size=cfg.dataset.image_size,
+            quality_report_path=quality_path,
+            augmentation_level='none',  # No augmentation for validation
+            split='val'
+        )
+        
+        # Create data loaders with proper parameters
+        data_loaders = create_data_loaders(
+            root_dir=cfg.dataset.path,  # Use the resolved path
+            batch_size=cfg.training.batch_size,
+            num_workers=cfg.dataset.num_workers,
+            transform_train=train_transform,
+            transform_val=val_transform,
+            target_size=cfg.dataset.image_size,
+            normalize=cfg.dataset.normalize,
+            patient_level_split=cfg.dataset.patient_level_split
+        )
+        
+        train_loader = data_loaders['train']
+        val_loader = data_loaders['val']
+        test_loader = data_loaders['test']
         
         # Determine model type from config
         model_type = cfg.model.get('type', None)
@@ -302,7 +344,7 @@ class UnifiedExperimentRunner:
         callbacks.append(checkpoint_callback)
         
         # Early stopping
-        if cfg.training.early_stopping.enabled:
+        if cfg.training.get('early_stopping', None):
             early_stop_callback = EarlyStopping(
                 monitor=cfg.training.early_stopping.monitor,
                 patience=cfg.training.early_stopping.patience,
@@ -313,71 +355,86 @@ class UnifiedExperimentRunner:
             callbacks.append(early_stop_callback)
         
         # Progress bar
-        callbacks.append(RichProgressBar())
+        progress_bar = RichProgressBar()
+        callbacks.append(progress_bar)
         
         # Learning rate monitor
-        callbacks.append(LearningRateMonitor(logging_interval='epoch'))
+        lr_monitor = LearningRateMonitor(logging_interval='epoch')
+        callbacks.append(lr_monitor)
         
-        # Best checkpoint callback
-        callbacks.append(BestCheckpointCallback())
-        
-        # Create logger
+        # Setup logger
         logger = None
         if cfg.wandb.mode != 'disabled':
             logger = WandbLogger(
-                project=cfg.wandb.project,
-                name=f"{cfg.model.name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
-                tags=cfg.wandb.tags,
                 mode=cfg.wandb.mode,
+                project=cfg.wandb.project,
+                entity=cfg.wandb.entity,
+                name=cfg.experiment_name,
+                tags=list(cfg.wandb.tags) if hasattr(cfg.wandb, 'tags') else [],
                 config=OmegaConf.to_container(cfg, resolve=True)
             )
         
-        # Create trainer
-        trainer_config = dict(cfg.trainer)
-        trainer_config.update({
-            'callbacks': callbacks,
-            'logger': logger,
-            'max_epochs': cfg.training.num_epochs,
-        })
+        # Setup trainer
+        trainer_config = OmegaConf.to_container(cfg.trainer, resolve=True)
+        
+        # Remove Hydra-specific keys
+        trainer_config.pop('_target_', None)
+        trainer_config.pop('callbacks', None)
+        trainer_config.pop('logger', None)
         
         # Handle device-specific settings
         if device.type == 'mps':
             trainer_config['accelerator'] = 'mps'
-            trainer_config['devices'] = 1
             trainer_config['precision'] = 32  # MPS doesn't support mixed precision yet
         elif device.type == 'cuda':
             trainer_config['accelerator'] = 'gpu'
-            trainer_config['devices'] = 1
-            
-            # Apply mixed precision settings for Swin if specified
-            if model_name.startswith('swin') and 'mixed_precision' in cfg.get('training', {}):
-                if cfg.training.mixed_precision == 'bf16':
-                    trainer_config['precision'] = 'bf16-mixed'
-                elif cfg.training.mixed_precision == 'fp16':
-                    trainer_config['precision'] = '16-mixed'
+            trainer_config['precision'] = cfg.training.get('precision', '16-mixed')
         else:
             trainer_config['accelerator'] = 'cpu'
-            trainer_config['devices'] = 1
+            trainer_config['precision'] = 32
         
-        trainer = pl.Trainer(**trainer_config)
+        # Create trainer
+        trainer = pl.Trainer(
+            **trainer_config,
+            callbacks=callbacks,
+            logger=logger
+        )
         
         # Train
-        console.print(f"\n[bold yellow]Starting training for {cfg.model.name}...[/bold yellow]")
-        trainer.fit(model_module, train_loader, val_loader)
+        console.print("\n[cyan]Starting training...[/cyan]")
+        trainer.fit(
+            model_module,
+            train_dataloaders=train_loader,
+            val_dataloaders=val_loader
+        )
         
         # Test
-        console.print(f"\n[bold yellow]Testing {cfg.model.name}...[/bold yellow]")
-        test_results = trainer.test(model_module, test_loader, ckpt_path='best')
+        test_results = {}
+        if not cfg.trainer.fast_dev_run and not cfg.trainer.get('limit_test_batches', 1.0) == 0:
+            console.print("\n[cyan]Running test evaluation...[/cyan]")
+            test_results = trainer.test(model_module, dataloaders=test_loader)[0]
         
-        # Prepare results
+        # Gather results
         results = {
-            'test_acc': test_results[0]['test_acc'] if test_results else 0.0,
-            'val_acc': checkpoint_callback.best_model_score.item() if hasattr(checkpoint_callback, 'best_model_score') else 0.0,
-            'train_acc': trainer.callback_metrics.get('train_acc', 0.0).item() if 'train_acc' in trainer.callback_metrics else 0.0,
-            'total_params': total_params
+            'model_name': cfg.model.name,
+            'total_params': total_params,
+            'trainable_params': trainable_params,
         }
         
-        # Clean up
+        # Add metrics if available
+        if hasattr(trainer, 'callback_metrics'):
+            metrics = trainer.callback_metrics
+            if 'val_acc' in metrics:
+                results['val_acc'] = float(metrics['val_acc'])
+            if 'train_acc' in metrics:
+                results['train_acc'] = float(metrics['train_acc'])
+        
+        # Add test results
+        if test_results:
+            if 'test_acc' in test_results:
+                results['test_acc'] = float(test_results['test_acc'])
+        
+        # Cleanup
         if logger:
             wandb.finish()
         

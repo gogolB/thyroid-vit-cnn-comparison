@@ -692,13 +692,20 @@ class SwinTransformer(VisionTransformerBase):
 # Factory functions for standard configurations
 def create_swin_tiny(pretrained: bool = False, **kwargs) -> SwinTransformer:
     """Create Swin-Tiny model."""
-    model = SwinTransformer(
-        embed_dim=96,
-        depths=[2, 2, 6, 2],
-        num_heads=[3, 6, 12, 24],
-        window_size=7,
-        **kwargs
-    )
+    # Default parameters for Swin-Tiny
+    defaults = {
+        'embed_dim': 96,
+        'depths': [2, 2, 6, 2],
+        'num_heads': [3, 6, 12, 24],
+        'window_size': 7,
+    }
+    
+    # Update defaults with any provided kwargs
+    # This prevents duplicate keyword arguments
+    for key, value in defaults.items():
+        kwargs.setdefault(key, value)
+    
+    model = SwinTransformer(**kwargs)
     
     if pretrained:
         # Load pretrained weights from timm or custom checkpoint
@@ -709,13 +716,19 @@ def create_swin_tiny(pretrained: bool = False, **kwargs) -> SwinTransformer:
 
 def create_swin_small(pretrained: bool = False, **kwargs) -> SwinTransformer:
     """Create Swin-Small model."""
-    model = SwinTransformer(
-        embed_dim=96,
-        depths=[2, 2, 18, 2],
-        num_heads=[3, 6, 12, 24],
-        window_size=7,
-        **kwargs
-    )
+    # Default parameters for Swin-Small
+    defaults = {
+        'embed_dim': 96,
+        'depths': [2, 2, 18, 2],
+        'num_heads': [3, 6, 12, 24],
+        'window_size': 7,
+    }
+    
+    # Update defaults with any provided kwargs
+    for key, value in defaults.items():
+        kwargs.setdefault(key, value)
+    
+    model = SwinTransformer(**kwargs)
     
     if pretrained:
         warnings.warn("Pretrained weights loading not implemented yet")
@@ -725,13 +738,19 @@ def create_swin_small(pretrained: bool = False, **kwargs) -> SwinTransformer:
 
 def create_swin_base(pretrained: bool = False, **kwargs) -> SwinTransformer:
     """Create Swin-Base model."""
-    model = SwinTransformer(
-        embed_dim=128,
-        depths=[2, 2, 18, 2],
-        num_heads=[4, 8, 16, 32],
-        window_size=7,
-        **kwargs
-    )
+    # Default parameters for Swin-Base
+    defaults = {
+        'embed_dim': 128,
+        'depths': [2, 2, 18, 2],
+        'num_heads': [4, 8, 16, 32],
+        'window_size': 7,
+    }
+    
+    # Update defaults with any provided kwargs
+    for key, value in defaults.items():
+        kwargs.setdefault(key, value)
+    
+    model = SwinTransformer(**kwargs)
     
     if pretrained:
         warnings.warn("Pretrained weights loading not implemented yet")
@@ -741,13 +760,19 @@ def create_swin_base(pretrained: bool = False, **kwargs) -> SwinTransformer:
 
 def create_swin_large(pretrained: bool = False, **kwargs) -> SwinTransformer:
     """Create Swin-Large model (Blackwell GPU exclusive)."""
-    model = SwinTransformer(
-        embed_dim=192,
-        depths=[2, 2, 18, 2],
-        num_heads=[6, 12, 24, 48],
-        window_size=7,
-        **kwargs
-    )
+    # Default parameters for Swin-Large
+    defaults = {
+        'embed_dim': 192,
+        'depths': [2, 2, 18, 2],
+        'num_heads': [6, 12, 24, 48],
+        'window_size': 7,
+    }
+    
+    # Update defaults with any provided kwargs
+    for key, value in defaults.items():
+        kwargs.setdefault(key, value)
+    
+    model = SwinTransformer(**kwargs)
     
     if pretrained:
         warnings.warn("Pretrained weights loading not implemented yet")
@@ -778,13 +803,15 @@ def create_swin_medical(
     
     config = configs[variant]
     
+    # Update kwargs with config values, but don't override if already present
+    for key, value in config.items():
+        kwargs.setdefault(key, value)
+    
     # Create model with first window size
-    model = SwinTransformer(
-        window_size=window_sizes[0],
-        medical_adaptations=True,
-        **config,
-        **kwargs
-    )
+    kwargs.setdefault('window_size', window_sizes[0])
+    kwargs.setdefault('medical_adaptations', True)
+    
+    model = SwinTransformer(**kwargs)
     
     # TODO: Implement variable window sizes per stage
     # This requires modifying the stage creation to accept per-stage window sizes

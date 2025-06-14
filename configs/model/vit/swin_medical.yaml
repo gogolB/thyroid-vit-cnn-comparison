@@ -3,6 +3,7 @@
 
 name: swin_medical
 type: swin
+architecture: vit
 params:
   # Architecture parameters
   img_size: 256

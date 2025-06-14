@@ -3,6 +3,7 @@
 
 name: swin_large
 type: swin
+architecture: vit
 params:
   # Architecture parameters
   img_size: 256

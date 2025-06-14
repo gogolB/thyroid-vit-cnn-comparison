@@ -2,52 +2,69 @@
 # Optimized for hierarchical vision transformers
 
 # Basic training parameters
+batch_size: 32
 num_epochs: 300
-batch_size: 32  # Will be overridden to 128 on Blackwell
-gradient_accumulation_steps: 1
+gradient_clip_val: 5.0  # Added for trainer compatibility
+accumulate_grad_batches: 1  # Added for trainer compatibility
+deterministic: false  # Added for trainer compatibility
+precision: "16-mixed"  # Added for consistency
+
+# Optimizer configuration (matches other configs structure)
+optimizer:
+  _target_: torch.optim.AdamW
+  lr: 0.001
+  weight_decay: 0.05
+  betas: [0.9, 0.999]
+  eps: 1e-8
+
+# Scheduler configuration (matches other configs structure)
+scheduler:
+  _target_: torch.optim.lr_scheduler.CosineAnnealingLR
+  T_max: 300
+  eta_min: 1e-5
+
+# Loss function with label smoothing
+loss:
+  _target_: torch.nn.CrossEntropyLoss
+  label_smoothing: 0.1
+
+# Early stopping configuration
+early_stopping:
+  patience: 50
+  min_delta: 0.001
+  mode: max
+  monitor: val_acc
+  verbose: true
+
+# Warmup configuration
+warmup:
+  warmup_epochs: 20
+  warmup_method: linear
+  warmup_factor: 0.001
+
+# Layer-wise learning rate decay
+layer_decay:
+  enabled: true
+  decay_rate: 0.85
+
+# Data loading
 num_workers: 8
 pin_memory: true
 persistent_workers: true
 
-# Optimizer configuration (AdamW is best for transformers)
-optimizer:
-  name: adamw
-  lr: 0.001  # Will be scaled by model-specific factor
-  weight_decay: 0.05  # Higher than CNNs
-  betas: [0.9, 0.999]
-  eps: 1e-8
-
-# Scheduler configuration
-scheduler:
-  name: cosine
-  warmup_epochs: 20
-  warmup_start_lr: 1e-6
-  min_lr: 1e-5
-  
-# Swin-specific training techniques
-training_techniques:
-  # Layer-wise learning rate decay
-  layer_lr_decay:
-    enabled: true
-    decay_rate: 0.85  # Configurable per model
-    
-  # Gradient clipping
+# Swin-specific settings (kept for model reference)
+swin_specific:
+  # Original gradient clipping settings
   gradient_clip:
     enabled: true
     max_norm: 5.0
     norm_type: 2
     
-  # Mixed precision training
-  mixed_precision:
-    enabled: true
-    backend: "native"  # PyTorch native AMP
-    dtype: "float16"  # bf16 on Blackwell
-    
   # Stochastic depth (drop path)
   drop_path:
     enabled: true
-    rate: 0.2  # Configured per model
-    mode: "linear"  # Linear decay from 0 to rate
+    rate: 0.2
+    mode: "linear"
     
   # EMA (Exponential Moving Average)
   ema:
@@ -55,74 +72,47 @@ training_techniques:
     decay: 0.9999
     update_every: 1
 
-# Data augmentation
+# Augmentation configuration (simplified to match expected structure)
 augmentation:
-  # Basic augmentations
-  random_resized_crop:
-    enabled: true
-    size: 256
-    scale: [0.8, 1.0]
-    ratio: [0.9, 1.1]
-    
-  horizontal_flip:
-    enabled: true
-    p: 0.5
-    
-  vertical_flip:
-    enabled: true
-    p: 0.5
-    
-  # Color augmentations (adapted for grayscale)
-  color_jitter:
-    enabled: true
-    brightness: 0.2
-    contrast: 0.2
-    
-  # Advanced augmentations
+  # RandAugment settings
   randaugment:
     enabled: true
-    n: 2  # Number of augmentations
-    m: 9  # Magnitude
+    n: 2
+    m: 9
     
+  # MixUp settings
   mixup:
     enabled: true
     alpha: 0.8
     prob: 0.5
+    switch_prob: 0.5
+    mode: batch
     
+  # CutMix settings
   cutmix:
     enabled: true
     alpha: 1.0
     prob: 0.5
+    
+  # Standard augmentations
+  random_crop: true
+  random_flip: true
+  color_jitter: false  # Disabled for grayscale
 
 # Regularization
 regularization:
-  label_smoothing: 0.1
-  weight_decay: 0.05  # In optimizer
-  drop_path_rate: 0.2  # Model-specific
+  drop_path_rate: 0.2
+  dropout_rate: 0.0
+  attention_dropout: 0.0
 
-# Monitoring and checkpointing
-monitoring:
-  track_attention_maps: true
-  track_gradient_norms: true
-  log_every_n_steps: 10
-  
-checkpoint:
-  save_top_k: 3
-  monitor: "val_acc"
-  mode: "max"
-  save_last: true
-  every_n_epochs: 10
+# Monitoring and logging
+log_every_n_steps: 10
+val_check_interval: 1.0
+save_top_k: 3
+save_last: true
 
-# Early stopping
-early_stopping:
-  enabled: true
-  monitor: "val_acc"
-  patience: 50  # Long patience for transformers
-  mode: "max"
-  min_delta: 0.001
-
-# Specific to thyroid dataset
+# Dataset specific settings
 dataset_specific:
-  class_weights: null  # Balanced dataset
+  class_weights: null
   quality_aware_sampling: true
-  oversample_high_quality: 1.5  # 50% more likely to sample high quality
+  oversample_high_quality: 1.5

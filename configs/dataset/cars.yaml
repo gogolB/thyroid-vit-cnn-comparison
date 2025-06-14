@@ -12,7 +12,7 @@ split_ratio:
   - 0.15
   - 0.15
 patient_level_split: true
-normalize: true
+normalize: false
 cache: false
 num_workers: 0
 pin_memory: true

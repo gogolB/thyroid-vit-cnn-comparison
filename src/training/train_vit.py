@@ -113,9 +113,55 @@ class ThyroidViTModule(pl.LightningModule):
         """Forward pass."""
         return self.model(x)
     
+    def _handle_logits_shape(self, logits, labels, context=""):
+        """Helper method to handle various logit shapes consistently"""
+        if logits.dim() == 1:
+            # Single prediction? This is unusual
+            if len(logits) == len(labels):
+                # Assume binary classification with single output
+                logits = torch.stack([1 - logits, logits], dim=1)
+            else:
+                raise ValueError(f"{context} Unexpected 1D logits shape: {logits.shape}")
+        elif logits.dim() == 3:
+            # [batch, 1, num_classes] -> [batch, num_classes]
+            if logits.shape[1] == 1:
+                logits = logits.squeeze(1)
+            else:
+                print(f"{context} Warning: Unexpected 3D logits shape {logits.shape}, using first dimension")
+                logits = logits[:, 0, :]
+        elif logits.dim() == 4:
+            # Spatial output - need to pool correctly
+            print(f"{context} Got 4D logits {logits.shape}, applying global average pooling")
+            
+            # Check which dimension has num_classes (should be 2 for binary)
+            if logits.shape[-1] == 2:  # [B, H, W, 2]
+                logits = logits.mean(dim=[1, 2])  # -> [B, 2]
+            elif logits.shape[1] == 2:  # [B, 2, H, W] 
+                logits = logits.mean(dim=[2, 3])  # -> [B, 2]
+            else:
+                # Default: assume last dim is classes
+                logits = logits.mean(dim=[1, 2])
+        elif logits.dim() != 2:
+            raise ValueError(f"{context} Unexpected logits shape: {logits.shape}")
+        
+        # Verify output shape
+        if logits.shape[1] != 2:
+            raise ValueError(f"{context} Expected 2 classes, got {logits.shape[1]}")
+        
+        return logits
+
     def training_step(self, batch, batch_idx):
         """Training step with DeiT support"""
         images, labels = batch
+        
+        # Defensive label handling
+        if labels.dtype != torch.long:
+            labels = labels.long()
+        
+        if labels.dim() == 0:  # Scalar
+            labels = labels.unsqueeze(0)
+        elif labels.dim() > 1 and labels.shape[-1] == 1:
+            labels = labels.squeeze(-1)
         
         # Forward pass
         outputs = self.model(images)
@@ -125,18 +171,22 @@ class ThyroidViTModule(pl.LightningModule):
             # DeiT returns (class_logits, distill_logits) during training
             class_logits, distill_logits = outputs
             
+            # Fix shapes using helper
+            class_logits = self._handle_logits_shape(class_logits, labels, "[Training-Class]")
+            distill_logits = self._handle_logits_shape(distill_logits, labels, "[Training-Distill]")
+            
             # Calculate losses
             class_loss = self.criterion(class_logits, labels)
             distill_loss = self.criterion(distill_logits, labels)
             
-            # Combine losses (can be weighted differently)
+            # Combine losses
             loss = 0.5 * class_loss + 0.5 * distill_loss
             
             # Use class logits for metrics
             logits = class_logits
         else:
-            # Standard ViT output
-            logits = outputs
+            # Standard output - fix shape using helper
+            logits = self._handle_logits_shape(outputs, labels, "[Training]")
             loss = self.criterion(logits, labels)
         
         # Calculate accuracy
@@ -148,18 +198,32 @@ class ThyroidViTModule(pl.LightningModule):
         self.log('train_acc', acc, on_step=True, on_epoch=True, prog_bar=True)
         
         return loss
-    
+
     def validation_step(self, batch, batch_idx):
         """Validation step."""
         images, labels = batch
         
+        # Defensive label handling
+        if labels.dtype != torch.long:
+            labels = labels.long()
+        
+        if labels.dim() == 0:
+            labels = labels.unsqueeze(0)
+        elif labels.dim() > 1 and labels.shape[-1] == 1:
+            labels = labels.squeeze(-1)
+        
         # Forward pass
         logits = self(images)
+        
+        # Fix shape using helper
+        logits = self._handle_logits_shape(logits, labels, "[Validation]")
+        
+        # Compute loss
         loss = self.criterion(logits, labels)
         
         # Calculate metrics
         preds = torch.argmax(logits, dim=1)
-        probs = F.softmax(logits, dim=1)[:, 1]  # Probability of positive class
+        probs = F.softmax(logits, dim=1)[:, 1]
         
         # Update metrics
         self.val_acc(preds, labels)
@@ -172,18 +236,32 @@ class ThyroidViTModule(pl.LightningModule):
         self.log('val_auc', self.val_auc, on_epoch=True)
         self.log('val_f1', self.val_f1, on_epoch=True)
         
-        # Log attention maps if requested (only for first batch)
+        # Log attention maps if requested
         if self.log_attention_maps and batch_idx == 0 and hasattr(self.model, 'get_attention_maps'):
             self._log_attention_maps(images, labels)
         
         return loss
-    
+
     def test_step(self, batch, batch_idx):
         """Test step."""
         images, labels = batch
         
+        # Defensive label handling
+        if labels.dtype != torch.long:
+            labels = labels.long()
+        
+        if labels.dim() == 0:
+            labels = labels.unsqueeze(0)
+        elif labels.dim() > 1 and labels.shape[-1] == 1:
+            labels = labels.squeeze(-1)
+        
         # Forward pass
         logits = self(images)
+        
+        # Fix shape using helper
+        logits = self._handle_logits_shape(logits, labels, "[Test]")
+        
+        # Compute loss
         loss = self.criterion(logits, labels)
         
         # Calculate accuracy

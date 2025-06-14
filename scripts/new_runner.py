@@ -228,56 +228,6 @@ class NewUnifiedRunner:
         # Set seed
         pl.seed_everything(cfg.seed, workers=True)
         
-        # Create data loaders
-        console.print("[yellow]Creating data loaders...[/yellow]")
-        
-        # Setup transforms
-        quality_report_path = Path(cfg.paths.data_dir).parent / 'reports' / 'quality_report.json'
-        
-        if cfg.model.get('quality_aware', True) and quality_report_path.exists():
-            console.print("[cyan]Using quality-aware preprocessing[/cyan]")
-            quality_path = quality_report_path
-        else:
-            console.print("[yellow]Quality-aware preprocessing disabled or report not found[/yellow]")
-            quality_path = None
-        
-        # Create transforms
-        augmentation_level = cfg.training.get('augmentation_level', 'medium')
-        
-        train_transform = create_quality_aware_transform(
-            target_size=cfg.dataset.image_size,
-            quality_report_path=quality_path,
-            augmentation_level=augmentation_level,
-            split='train'
-        )
-        
-        val_transform = create_quality_aware_transform(
-            target_size=cfg.dataset.image_size,
-            quality_report_path=quality_path,
-            augmentation_level='none',
-            split='val'
-        )
-        
-        # Create data loaders
-        data_loaders = create_data_loaders(
-            root_dir=cfg.dataset.path,
-            batch_size=cfg.training.batch_size,
-            num_workers=cfg.dataset.num_workers,
-            transform_train=train_transform,
-            transform_val=val_transform,
-            target_size=cfg.dataset.image_size,
-            normalize=cfg.dataset.normalize,
-            patient_level_split=cfg.dataset.patient_level_split
-        )
-        
-        console.print(f"[green]✓ Data loaders created[/green]")
-        console.print(f"  Train: {len(data_loaders['train'].dataset)} samples")
-        console.print(f"  Val: {len(data_loaders['val'].dataset)} samples")
-        console.print(f"  Test: {len(data_loaders['test'].dataset)} samples")
-        
-        # Create model
-        console.print("\n[cyan]Creating model...[/cyan]")
-        
         # Determine model type and create appropriate module
         model_name = cfg.model.name
         model_type = cfg.model.get('type', None)
@@ -290,6 +240,63 @@ class NewUnifiedRunner:
                           'deit_tiny', 'deit_small', 'deit_base',
                           'swin_tiny', 'swin_small', 'swin_base', 'swin_large', 'swin_medical']
         )
+        
+        # Create data loaders
+        # Create data loaders with quality-aware preprocessing
+        console.print("\n[cyan]Creating data loaders...[/cyan]")
+        
+        # Get transforms
+        quality_report_path = Path(cfg.paths.data_dir).parent / 'reports' / 'quality_report.json'
+        
+        if cfg.model.get('quality_aware', True) and quality_report_path.exists():
+            console.print("[cyan]Using quality-aware preprocessing[/cyan]")
+            quality_path = quality_report_path
+        else:
+            console.print("[yellow]Quality-aware preprocessing disabled or report not found[/yellow]")
+            quality_path = None
+        
+        # Get augmentation level from config
+        augmentation_level = cfg.training.get('augmentation_level', 'medium')
+        
+        # For ViT models, we might want stronger augmentation
+        if is_vit and augmentation_level == 'medium':
+            augmentation_level = 'strong'
+            console.print("[cyan]Using strong augmentation for ViT model[/cyan]")
+        
+        train_transform = create_quality_aware_transform(
+            target_size=cfg.dataset.image_size,
+            quality_report_path=quality_path,
+            augmentation_level=augmentation_level,
+            split='train'
+        )
+        
+        val_transform = create_quality_aware_transform(
+            target_size=cfg.dataset.image_size,
+            quality_report_path=quality_path,
+            augmentation_level='none',  # No augmentation for validation
+            split='val'
+        )
+        
+        # Create data loaders
+        data_loaders = create_data_loaders(
+            root_dir=cfg.dataset.path,
+            batch_size=cfg.training.batch_size,
+            num_workers=cfg.dataset.num_workers,
+            transform_train=train_transform,
+            transform_val=val_transform,
+            target_size=cfg.dataset.image_size,
+            normalize=False,  # Normalization handled in transforms
+            patient_level_split=cfg.dataset.patient_level_split
+        )
+        
+        console.print(f"[green]✓ Data loaders created[/green]")
+        console.print(f"  Train: {len(data_loaders['train'].dataset)} samples")
+        console.print(f"  Val: {len(data_loaders['val'].dataset)} samples")
+        console.print(f"  Test: {len(data_loaders['test'].dataset)} samples")
+        
+        # Create model
+        console.print("\n[cyan]Creating model...[/cyan]")
+        
         
         if is_vit:
             if not VIT_AVAILABLE:

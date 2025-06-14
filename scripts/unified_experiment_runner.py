@@ -406,7 +406,7 @@ class UnifiedExperimentRunner:
         model_name = cfg.model.name
         if model_name in ['vit_tiny', 'vit_small', 'vit_base',
                         'deit_tiny', 'deit_small', 'deit_base',
-                        'swin_tiny', 'swin_small', 'swin_base']:
+                        'swin_tiny', 'swin_small', 'swin_base', "swin_large", 'swin_medical']:
             model = ThyroidViTModule(cfg)
         else:
             model = ThyroidCNNModule(cfg)

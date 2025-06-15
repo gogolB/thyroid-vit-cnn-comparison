@@ -233,7 +233,8 @@ class UnifiedExperimentRunner:
         model_type: str = 'cnn',
         training_config: str = 'standard',
         overrides: Optional[Dict] = None,
-        quick_test: bool = False
+        quick_test: bool = False,
+        fold: Optional[int] = None
     ) -> Dict:
         """Run a single experiment.
         
@@ -281,7 +282,7 @@ class UnifiedExperimentRunner:
                 raise ValueError(f"Configuration creation failed: {e}")
             
             # Run the experiment
-            result = self._execute_training(cfg)
+            result = self._execute_training(cfg, fold=fold)
             
             # Calculate elapsed time
             elapsed_time = time.time() - start_time
@@ -290,7 +291,8 @@ class UnifiedExperimentRunner:
                 'time_seconds': elapsed_time,
                 'time_formatted': f"{elapsed_time/60:.1f} min",
                 'model_name': model_name,
-                'model_type': model_type
+                'model_type': model_type,
+                'fold': fold
             })
             
             console.print(f"\n[green]✓ {model_name} completed successfully![/green]")
@@ -304,7 +306,8 @@ class UnifiedExperimentRunner:
                 'error': str(e),
                 'time_seconds': elapsed_time,
                 'model_name': model_name,
-                'model_type': model_type
+                'model_type': model_type,
+                'fold': fold
             }
             console.print(f"\n[red]✗ {model_name} failed: {e}[/red]")
             console.print("[red]Stack trace:[/red]")
@@ -319,8 +322,8 @@ class UnifiedExperimentRunner:
         
         console.print("[dim]━" * 80 + "[/dim]\n")
         return result
-    
-    def _execute_training(self, cfg: DictConfig) -> Dict:
+
+    def _execute_training(self, cfg: DictConfig, fold: Optional[int] = None) -> Dict:
         """Execute the actual training process.
         
         Args:
@@ -368,19 +371,23 @@ class UnifiedExperimentRunner:
             augmentation_level = 'strong'
             console.print("[cyan]Using strong augmentation for ViT model[/cyan]")
         
+        target_size = cfg.dataset.image_size if 'swin' not in cfg.model.name else 224
+        
         train_transform = create_quality_aware_transform(
-            target_size=cfg.dataset.image_size,
+            target_size=target_size,
             quality_report_path=quality_path,
             augmentation_level=augmentation_level,
             split='train'
         )
         
         val_transform = create_quality_aware_transform(
-            target_size=cfg.dataset.image_size,
+            target_size=target_size,
             quality_report_path=quality_path,
             augmentation_level='none',  # No augmentation for validation
             split='val'
         )
+        
+        fold = fold if fold is not None else cfg.dataset.fold if hasattr(cfg.dataset, 'fold') else 1
         
         # Create data loaders
         data_loaders = create_data_loaders(
@@ -389,10 +396,10 @@ class UnifiedExperimentRunner:
             num_workers=cfg.dataset.num_workers,
             transform_train=train_transform,
             transform_val=val_transform,
-            target_size=cfg.dataset.image_size,
+            target_size=target_size,
             normalize=False,  # Normalization handled in transforms
             patient_level_split=cfg.dataset.patient_level_split,
-            fold=cfg.dataset.fold if hasattr(cfg.dataset, 'fold') else 1,
+            fold=fold,
         )
         
         console.print(f"[green]✓ Data loaders created[/green]")
@@ -528,7 +535,7 @@ class UnifiedExperimentRunner:
             'test_acc': float(test_results[0].get('test_acc', 0)),
             'best_epoch': checkpoint_callback.best_model_score.item() if hasattr(checkpoint_callback, 'best_model_score') else 0,
             'total_epochs': trainer.current_epoch + 1,
-            'fold': cfg.dataset.fold if hasattr(cfg.dataset, 'fold') else 1,
+            'fold': fold,
         }
         
         # Clean up

@@ -528,6 +528,7 @@ class UnifiedExperimentRunner:
             'test_acc': float(test_results[0].get('test_acc', 0)),
             'best_epoch': checkpoint_callback.best_model_score.item() if hasattr(checkpoint_callback, 'best_model_score') else 0,
             'total_epochs': trainer.current_epoch + 1,
+            'fold': cfg.dataset.fold if hasattr(cfg.dataset, 'fold') else 1,
         }
         
         # Clean up

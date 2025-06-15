@@ -1,7 +1,14 @@
 """
-Rich console utilities for beautiful logging throughout the project
+Utility functions and classes related to logging and console output.
+This module will consolidate utilities previously in src/utils/console.py
+and potentially other logging-related code.
 """
+# Standard library imports
+import logging
+from typing import Optional
+from pathlib import Path # Added as it's used in the Logger class
 
+# Third-party imports
 from rich.console import Console
 from rich.progress import (
     Progress, 
@@ -14,8 +21,9 @@ from rich.progress import (
 from rich.logging import RichHandler
 from rich.table import Table
 from rich.panel import Panel
-import logging
-from typing import Optional
+import structlog
+
+# Project-specific imports (will be added when functions are moved)
 
 
 # Global console instance
@@ -158,51 +166,18 @@ def print_model_summary(
     
     console.print(table)
 
+class Logger:
+    """Unified logging with Rich display and structured logs."""
+    
+    def __init__(self, name: str, experiment_dir: Path = None):
+        self.console = Console()
+        self.logger = structlog.get_logger(name)
+        if experiment_dir:
+            self._setup_file_logging(name, experiment_dir)
 
-# Example usage function
-def demo_rich_features():
-    """Demonstrate Rich features for the project."""
-    
-    # Logger example
-    logger = get_logger(__name__)
-    logger.info("Starting thyroid classification project...")
-    
-    # Data summary example
-    print_data_summary(
-        dataset_name="CARS Thyroid",
-        total_images=450,
-        class_distribution={"normal": 225, "cancerous": 225},
-        image_size=(512, 512, 1),
-        split_info={"train": 315, "val": 68, "test": 67}
-    )
-    
-    # Progress bar example
-    import time
-    with create_progress_bar("Loading images") as progress:
-        task = progress.add_task("[cyan]Processing...", total=100)
-        for i in range(100):
-            time.sleep(0.01)
-            progress.update(task, advance=1)
-    
-    # Training config example
-    print_training_config({
-        "model": "ResNet50",
-        "batch_size": 32,
-        "learning_rate": 0.001,
-        "optimizer": {
-            "type": "AdamW",
-            "weight_decay": 0.01
-        }
-    })
-    
-    # Model summary example
-    print_model_summary(
-        model_name="ResNet50",
-        total_params=25_557_032,
-        trainable_params=23_514_432,
-        model_size_mb=97.49
-    )
-
-
-if __name__ == "__main__":
-    demo_rich_features()
+    def _setup_file_logging(self, name: str, experiment_dir: Path):
+        # Placeholder for actual file logging setup with structlog
+        # e.g., structlog.configure([... processors ...])
+        # For now, a simple print or pass is fine.
+        print(f"Placeholder: File logging would be set up for {name} in {experiment_dir}")
+        pass

@@ -9,235 +9,63 @@ import timm
 from typing import Optional, Dict, Any
 from omegaconf import DictConfig
 
+from src.models.registry import ModelRegistry
+from src.models.base import CNNBase
 
-class EfficientNetB0(nn.Module):
-    """EfficientNet-B0 model for binary classification."""
+@ModelRegistry.register(['efficientnet_b0', 'efficientnet_b1', 'efficientnet_b2', 'efficientnet_b3'], 'cnn')
+class EfficientNet(CNNBase):
+    """Unified EfficientNet implementation."""
     
-    def __init__(
-        self,
-        num_classes: int = 2,
-        pretrained: bool = True,
-        dropout_rate: float = 0.2,
-        drop_connect_rate: float = 0.2,
-        in_channels: int = 1,
-        **kwargs
-    ):
-        super().__init__()
-        
-        # Create EfficientNet-B0 model using timm
-        self.model = timm.create_model(
-            'efficientnet_b0',
-            pretrained=pretrained,
-            in_chans=in_channels,
-            num_classes=num_classes,
-            drop_rate=dropout_rate,
-            drop_path_rate=drop_connect_rate
-        )
-        
-        # Store model info
-        self.num_features = self.model.num_features
-        self.num_classes = num_classes
-        
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Forward pass."""
-        return self.model(x)
-    
-    def get_classifier(self):
-        """Get the classifier layer."""
-        return self.model.classifier
-    
-    def freeze_backbone(self):
-        """Freeze all layers except the classifier."""
-        for name, param in self.model.named_parameters():
-            if 'classifier' not in name:
-                param.requires_grad = False
-
-
-class EfficientNetB1(nn.Module):
-    """EfficientNet-B1 model for binary classification."""
-    
-    def __init__(
-        self,
-        num_classes: int = 2,
-        pretrained: bool = True,
-        dropout_rate: float = 0.2,
-        drop_connect_rate: float = 0.2,
-        in_channels: int = 1,
-        **kwargs
-    ):
-        super().__init__()
-        
-        # Create EfficientNet-B1 model using timm
-        self.model = timm.create_model(
-            'efficientnet_b1',
-            pretrained=pretrained,
-            in_chans=in_channels,
-            num_classes=num_classes,
-            drop_rate=dropout_rate,
-            drop_path_rate=drop_connect_rate
-        )
-        
-        self.num_features = self.model.num_features
-        self.num_classes = num_classes
-        
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Forward pass."""
-        return self.model(x)
-    
-    def get_classifier(self):
-        """Get the classifier layer."""
-        return self.model.classifier
-    
-    def freeze_backbone(self):
-        """Freeze all layers except the classifier."""
-        for name, param in self.model.named_parameters():
-            if 'classifier' not in name:
-                param.requires_grad = False
-
-
-class EfficientNetB2(nn.Module):
-    """EfficientNet-B2 model for binary classification."""
-    
-    def __init__(
-        self,
-        num_classes: int = 2,
-        pretrained: bool = True,
-        dropout_rate: float = 0.3,
-        drop_connect_rate: float = 0.2,
-        in_channels: int = 1,
-        **kwargs
-    ):
-        super().__init__()
-        
-        # Create EfficientNet-B2 model using timm
-        self.model = timm.create_model(
-            'efficientnet_b2',
-            pretrained=pretrained,
-            in_chans=in_channels,
-            num_classes=num_classes,
-            drop_rate=dropout_rate,
-            drop_path_rate=drop_connect_rate
-        )
-        
-        self.num_features = self.model.num_features
-        self.num_classes = num_classes
-        
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Forward pass."""
-        return self.model(x)
-    
-    def get_classifier(self):
-        """Get the classifier layer."""
-        return self.model.classifier
-    
-    def freeze_backbone(self):
-        """Freeze all layers except the classifier."""
-        for name, param in self.model.named_parameters():
-            if 'classifier' not in name:
-                param.requires_grad = False
-
-
-class EfficientNetB3(nn.Module):
-    """EfficientNet-B3 model for binary classification."""
-    
-    def __init__(
-        self,
-        num_classes: int = 2,
-        pretrained: bool = True,
-        dropout_rate: float = 0.3,
-        drop_connect_rate: float = 0.3,
-        in_channels: int = 1,
-        **kwargs
-    ):
-        super().__init__()
-        
-        # Create EfficientNet-B3 model using timm
-        self.model = timm.create_model(
-            'efficientnet_b3',
-            pretrained=pretrained,
-            in_chans=in_channels,
-            num_classes=num_classes,
-            drop_rate=dropout_rate,
-            drop_path_rate=drop_connect_rate
-        )
-        
-        self.num_features = self.model.num_features
-        self.num_classes = num_classes
-        
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Forward pass."""
-        return self.model(x)
-    
-    def get_classifier(self):
-        """Get the classifier layer."""
-        return self.model.classifier
-    
-    def freeze_backbone(self):
-        """Freeze all layers except the classifier."""
-        for name, param in self.model.named_parameters():
-            if 'classifier' not in name:
-                param.requires_grad = False
-
-
-def create_efficientnet_model(cfg: DictConfig) -> nn.Module:
-    """
-    Factory function to create EfficientNet models based on configuration.
-    
-    Args:
-        cfg: Hydra configuration object
-        
-    Returns:
-        EfficientNet model instance
-    """
-    model_map = {
-        'efficientnet_b0': EfficientNetB0,
-        'efficientnet_b1': EfficientNetB1,
-        'efficientnet_b2': EfficientNetB2,
-        'efficientnet_b3': EfficientNetB3,
+    VARIANT_CONFIG = {
+        'efficientnet_b0': {'width': 1.0, 'depth': 1.0, 'dropout': 0.2},
+        'efficientnet_b1': {'width': 1.0, 'depth': 1.1, 'dropout': 0.2},
+        'efficientnet_b2': {'width': 1.1, 'depth': 1.2, 'dropout': 0.3},
+        'efficientnet_b3': {'width': 1.2, 'depth': 1.4, 'dropout': 0.3},
     }
-    
-    model_name = cfg.model.name
-    if model_name not in model_map:
-        raise ValueError(f"Unknown EfficientNet model: {model_name}")
-    
-    # Extract model parameters from config
-    model_params = {
-        'num_classes': cfg.dataset.num_classes,
-        'pretrained': cfg.model.pretrained,
-        'dropout_rate': cfg.model.dropout_rate,
-        'in_channels': 1,  # CARS images are single channel
-    }
-    
-    # Add drop_connect_rate if specified in config
-    if hasattr(cfg.model, 'drop_connect_rate'):
-        model_params['drop_connect_rate'] = cfg.model.drop_connect_rate
-    
-    # Create and return model
-    model = model_map[model_name](**model_params)
-    
-    # Freeze backbone if specified
-    if cfg.model.freeze_backbone:
-        model.freeze_backbone()
-    
-    return model
 
+    def __init__(self, config: DictConfig): # Changed from 'config' to 'config: DictConfig' for consistency
+        super().__init__(config)
+        self.variant = config.name # e.g., 'efficientnet_b0'
+        # Ensure config.name is one of the keys in VARIANT_CONFIG or handle default
+        if self.variant not in self.VARIANT_CONFIG:
+            raise ValueError(f"Unsupported EfficientNet variant: {self.variant}. Supported variants are: {list(self.VARIANT_CONFIG.keys())}")
+        self.variant_params = self.VARIANT_CONFIG[self.variant] # Use direct access after check
+        self._build_model()
 
-# Convenience functions for direct model creation
-def efficientnet_b0(num_classes: int = 2, pretrained: bool = True, **kwargs) -> EfficientNetB0:
-    """Create EfficientNet-B0 model."""
-    return EfficientNetB0(num_classes=num_classes, pretrained=pretrained, **kwargs)
+    def _build_model(self):
+        """
+        Builds the EfficientNet model based on the variant specified in the config,
+        using the timm library.
+        Example: self.variant could be 'efficientnet_b0', 'efficientnet_b1', etc.
+        self.variant_params comes from the VARIANT_CONFIG dictionary.
+        """
+        pretrained = self.config.get('pretrained', True)
+        num_classes = self.config.get('num_classes', 2) # Default to 2 classes
+        
+        # Get dropout from variant_params, with a fallback default if not specified for a variant
+        # The default dropout in timm for efficientnet_b0 is 0.2, b1 is 0.2, b2 is 0.3, b3 is 0.3.
+        # We use the values from VARIANT_CONFIG if present.
+        default_dropout = 0.2 # A general fallback
+        dropout_rate = self.variant_params.get('dropout', default_dropout)
+        in_chans = self.config.get('in_channels', self.config.get('channels', 1)) # Get in_channels from model or dataset config
 
+        model_name = self.variant # e.g., 'efficientnet_b0'
 
-def efficientnet_b1(num_classes: int = 2, pretrained: bool = True, **kwargs) -> EfficientNetB1:
-    """Create EfficientNet-B1 model."""
-    return EfficientNetB1(num_classes=num_classes, pretrained=pretrained, **kwargs)
+        try:
+            self.model = timm.create_model(
+                model_name,
+                pretrained=pretrained,
+                num_classes=num_classes,
+                drop_rate=dropout_rate,
+                in_chans=in_chans
+                # timm handles classifier replacement based on num_classes.
+                # Other parameters from self.variant_params (like width, depth) are typically
+                # part of the model_name string itself for timm (e.g., 'tf_efficientnet_b0_ap').
+                # If specific width/depth multipliers are needed beyond standard variants,
+                # timm's create_model might have other ways, or a custom model definition is needed.
+                # For now, we rely on standard timm variants.
+            )
+        except Exception as e:
+            raise RuntimeError(f"Failed to create EfficientNet model {model_name} using timm: {e}")
 
-
-def efficientnet_b2(num_classes: int = 2, pretrained: bool = True, **kwargs) -> EfficientNetB2:
-    """Create EfficientNet-B2 model."""
-    return EfficientNetB2(num_classes=num_classes, pretrained=pretrained, **kwargs)
-
-
-def efficientnet_b3(num_classes: int = 2, pretrained: bool = True, **kwargs) -> EfficientNetB3:
-    """Create EfficientNet-B3 model."""
-    return EfficientNetB3(num_classes=num_classes, pretrained=pretrained, **kwargs)
+    # Ensure no other EfficientNet-specific model classes or factory functions remain.

@@ -1,0 +1,15 @@
+# @package _group_
+# Base configuration for all CNN models
+
+defaults:
+  - ../base # Inherits from configs/model/base.yaml
+  # Add any CNN specific group defaults if you have them e.g.
+  # - cnn_block: res_block
+
+architecture: cnn
+freeze_backbone: false
+quality_aware: false # Example, can be overridden by specific CNNs
+
+# CNN-specific parameters
+# Example:
+# dropout_rate: 0.1

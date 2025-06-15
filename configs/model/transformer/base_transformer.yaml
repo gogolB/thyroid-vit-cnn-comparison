@@ -1,0 +1,13 @@
+# @package _group_
+# Base configuration for all Transformer models (ViT, Swin, etc.)
+
+defaults:
+  - ../base # Inherits from configs/model/base.yaml
+
+architecture: transformer # or 'vit', 'swin' etc.
+
+# Transformer-specific parameters
+# Example:
+img_size: 224
+patch_size: 16
+# drop_path_rate: 0.1

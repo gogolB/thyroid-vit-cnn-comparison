@@ -1,0 +1,13 @@
+# @package _group_
+# Training configuration specific to Transformer models (ViT, Swin, etc.)
+
+defaults:
+  - base # Inherits from base.yaml
+  # Potentially override or add Transformer-specific optimizer/scheduler defaults here
+  # - override /optimizer: adamw 
+  # - override /scheduler: cosine_warmup
+
+# Transformer-specific training parameters can be added here
+# For example:
+# transformer_specific_param: value
+# gradient_clip_val: 1.0 # Often used with transformers

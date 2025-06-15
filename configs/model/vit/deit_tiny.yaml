@@ -1,14 +1,18 @@
 # configs/model/vit/deit_tiny.yaml
+defaults:
+  - ../transformer/base_transformer
+  # - _self_ # Uncomment if you need to reference other keys in this file
+
 name: deit_tiny
-type: vision_transformer
-architecture: deit
+type: vision_transformer # This could potentially be moved to base_transformer if all vit models are vision_transformers
+architecture: deit # Overrides base_transformer's 'transformer'
 
 # Model parameters
 params:
-  img_size: 256
-  patch_size: 16
+  img_size: 256 # Overrides base_transformer's 224
+  # patch_size: 16 # Inherited from base_transformer
   in_chans: 1  # Grayscale thyroid images
-  num_classes: 2  # Binary classification
+  # num_classes: 2 # Inherited from base
   embed_dim: 192
   depth: 12
   num_heads: 3
@@ -29,7 +33,7 @@ params:
   pool_type: cls
   
 # Pretrained settings
-pretrained: true
+# pretrained: true # Inherited from base
 pretrained_cfg:
   model_name: "deit_tiny_patch16_224"
   url: "https://dl.fbaipublicfiles.com/deit/deit_tiny_patch16_224-a1311bcf.pth"

@@ -1,0 +1,6 @@
+[MESSAGES CONTROL]
+
+# Disable the following messages:
+# C0301: Line too long
+# C0303: Trailing whitespace
+disable=C0301,C0303

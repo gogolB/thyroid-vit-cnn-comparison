@@ -1,12 +1,11 @@
+defaults:
+  - base_cnn
+
 name: efficientnet_b3
-architecture: cnn
 _target_: src.models.cnn.efficientnet.EfficientNetB3
 
 # Model parameters
-num_classes: ${dataset.num_classes}
 in_channels: 1  # Grayscale CARS images
-pretrained: true
-freeze_backbone: false
 
 # EfficientNet-B3 specific parameters
 dropout_rate: 0.3  # Higher dropout for larger model

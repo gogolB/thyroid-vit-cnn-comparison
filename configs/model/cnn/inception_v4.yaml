@@ -1,11 +1,13 @@
+defaults:
+  - base_cnn
+
 name: inception_v4
-architecture: cnn
 _target_: src.models.cnn.inception.InceptionV4
 
 # Model parameters
-num_classes: ${dataset.num_classes}
 in_channels: 1  # Grayscale CARS images
 init_weights: true  # Initialize from scratch
+pretrained: false # Overrides base.yaml, training from scratch
 aux_logits: false  # No auxiliary classifiers for simplicity
 
 # Inception-specific parameters

@@ -1,14 +1,18 @@
 # configs/model/vit/vit_tiny.yaml
+defaults:
+  - ../transformer/base_transformer
+  # - _self_
+
 name: vit_tiny
 type: vision_transformer
-architecture: vit
+# architecture: vit # Inherited from base_transformer as 'transformer'
 
 # Model parameters
 params:
-  img_size: 256
-  patch_size: 16
+  img_size: 256 # Overrides base_transformer's 224
+  # patch_size: 16 # Inherited from base_transformer
   in_chans: 1  # Grayscale thyroid images
-  num_classes: 2  # Binary classification
+  # num_classes: 2  # Inherited from base
   embed_dim: 192  # Tiny model dimension
   depth: 12
   num_heads: 3  # 192 / 64 = 3
@@ -27,7 +31,7 @@ params:
   pool_type: cls
   
 # No pretrained weights for standard ViT
-pretrained: false
+# pretrained: false # Overrides base.yaml's true, and base_transformer inherits from base.
   
 # Attention visualization
 attention:

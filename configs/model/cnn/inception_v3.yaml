@@ -1,13 +1,14 @@
+defaults:
+  - base_cnn
 
 name: inception_v3
-architecture: cnn
-_target_: src.models.cnn.inception.InceptionV3
+_target_: src.models.cnn.inception.Inception
 
 # Model parameters
-num_classes: ${dataset.num_classes}
 in_channels: 1  # Grayscale CARS images
 aux_logits: false  # Disable auxiliary classifiers for stability
 transform_input: false  # Don't use ImageNet normalization
+pretrained: false # Overrides base.yaml, training from scratch
 
 # Inception-v3 specific parameters
 dropout_rate: 0.5  # Standard dropout for Inception-v3

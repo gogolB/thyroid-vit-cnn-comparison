@@ -1,19 +1,23 @@
 """
-Teacher Model Loading Utility for Knowledge Distillation
-Handles loading pre-trained CNN and ViT models as teachers
+Utility functions and classes related to model handling, loading, and architecture.
+This module will consolidate utilities for loading models,
+including teacher models (previously in src/utils/teacher_loader.py),
+and other model-specific helpers.
 """
-
-import torch
-import torch.nn as nn
+# Standard library imports
+import warnings
 from pathlib import Path
 from typing import Union, Optional, Dict, List, Tuple
+
+# Third-party imports
+import torch
+import torch.nn as nn
 from omegaconf import DictConfig, OmegaConf
-import warnings
 
-from src.training.train_cnn import ThyroidCNNModule
-from src.training.train_vit import ThyroidViTModule
-from src.utils.device import get_device
-
+# Project-specific imports
+# Imports for ThyroidCNNModule and ThyroidViTModule will be moved into load_teacher_from_checkpoint
+# to break circular dependency.
+from src.utils.training import get_device
 
 class TeacherModelLoader:
     """Utility class for loading and managing teacher models for distillation"""
@@ -72,6 +76,9 @@ class TeacherModelLoader:
         
         # Load the appropriate module
         try:
+            # Import here to break circular dependency
+            from src.training.lightning_modules import ThyroidCNNModule, ThyroidViTModule
+
             if model_type.lower() == 'cnn':
                 # Load CNN model
                 lightning_module = ThyroidCNNModule.load_from_checkpoint(

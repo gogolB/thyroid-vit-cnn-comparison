@@ -1,0 +1,21 @@
+# @package _group_
+name: "cars_thyroid_default"
+data_path: "data/raw"  # As specified by the user
+
+use_kfold: false
+split_dir: "data/splits" # Default directory for split files
+fold: null
+val_split_ratio: 0.2
+test_split_ratio: null # Or 0.2 if a default test split is always desired
+
+img_size: 256
+channels: 1 # Assuming grayscale based on previous context
+mean: [0.5]
+std: [0.5]
+
+apply_augmentations: false # Default to no augmentations for base config
+
+quality_preprocessing: false # Default to no quality preprocessing
+extreme_dark_threshold: 150.0
+low_contrast_threshold: 20.0
+artifact_percentile: 99.5

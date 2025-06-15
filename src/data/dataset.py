@@ -54,6 +54,7 @@ class CARSThyroidDataset(Dataset):
         normalize: Whether to normalize uint16 to [0, 1]
         cache_images: Whether to cache images in memory
         patient_level_split: Whether to split by patient ID
+        fold: (Optional) The specific fold to load for cross-validation (e.g., 1 to k).
     """
     
     def __init__(
@@ -64,7 +65,8 @@ class CARSThyroidDataset(Dataset):
         target_size: int = 256,
         normalize: bool = True,
         cache_images: bool = False,
-        patient_level_split: bool = False,  # Changed default to False
+        patient_level_split: bool = False,
+        fold: Optional[int] = None,
         split_info_file: Optional[str] = None
     ):
         self.root_dir = Path(root_dir)
@@ -74,163 +76,91 @@ class CARSThyroidDataset(Dataset):
         self.normalize = normalize
         self.cache_images = cache_images
         self.patient_level_split = patient_level_split
+        self.fold = fold
         
-        # Image cache
         self.image_cache = {} if cache_images else None
         
-        # Load or create split information
-        self.split_info_file = split_info_file or self.root_dir.parent / 'splits' / 'split_info.json'
+        self.splits_dir = self.root_dir.parent / 'splits'
         
-        # Initialize dataset
+        # --- DEFINITIVE SPLIT FILE LOGIC ---
+        if self.fold is not None:
+            # K-fold mode: Load a specific train/val fold
+            self.split_info_file = self.splits_dir / f'split_fold_{self.fold}.json'
+        else:
+            # Backward-compatible single-split mode
+            self.split_info_file = split_info_file or self.splits_dir / 'split_info.json'
+        
         self._load_dataset()
         
     def _load_dataset(self):
         """Load dataset and create/load splits."""
         console.print(f"[cyan]Loading CARS dataset from:[/cyan] {self.root_dir}")
         
-        # Find all image files
         self.image_paths = []
         self.labels = []
         self.patient_ids = []
         
-        # Expected directory structure: root_dir/class_name/images
         for class_idx, class_name in enumerate(['normal', 'cancerous']):
             class_dir = self.root_dir / class_name
+            if not class_dir.exists(): continue
             
-            if not class_dir.exists():
-                console.print(f"[yellow]Warning:[/yellow] Directory {class_dir} not found")
-                continue
-            
-            # Support multiple image formats
             supported_formats = ['*.tif', '*.tiff', '*.png', '*.jpg', '*.jpeg']
-            class_images = []
-            
-            for fmt in supported_formats:
-                class_images.extend(list(class_dir.glob(fmt)))
-            
+            class_images = [p for fmt in supported_formats for p in class_dir.glob(fmt)]
             console.print(f"[green]Found {len(class_images)} images for class '{class_name}'[/green]")
             
             for img_path in class_images:
                 self.image_paths.append(img_path)
                 self.labels.append(class_idx)
-                
-                # Extract patient ID from filename
-                # For files like normal_150.tif or cancer_220.tif, use the number as unique ID
-                if '_' in img_path.stem:
-                    # Extract the number after underscore as unique identifier
-                    parts = img_path.stem.split('_')
-                    if len(parts) >= 2 and parts[-1].isdigit():
-                        patient_id = f"{class_name}_{parts[-1]}"
-                    else:
-                        patient_id = img_path.stem
+                if '_' in img_path.stem and img_path.stem.split('_')[-1].isdigit():
+                    self.patient_ids.append(f"{class_name}_{img_path.stem.split('_')[-1]}")
                 else:
-                    patient_id = img_path.stem
-                self.patient_ids.append(patient_id)
+                    self.patient_ids.append(img_path.stem)
         
-        # Convert to numpy arrays
         self.image_paths = np.array(self.image_paths)
         self.labels = np.array(self.labels)
         self.patient_ids = np.array(self.patient_ids)
         
-        # Create or load splits
         self._create_splits()
         
     def _create_splits(self):
-        """Create train/val/test splits, ensuring patient-level splitting if requested."""
-        
+        """Load splits from the appropriate file."""
         if self.split == 'all':
             self.indices = np.arange(len(self.image_paths))
             return
         
-        # Check if split file exists
         if self.split_info_file.exists():
-            console.print(f"[cyan]Loading existing splits from:[/cyan] {self.split_info_file}")
+            console.print(f"[cyan]Loading splits from:[/cyan] {self.split_info_file}")
             with open(self.split_info_file, 'r') as f:
                 split_data = json.load(f)
-            
             self.indices = np.array(split_data[self.split])
         else:
-            console.print("[yellow]Creating new train/val/test splits...[/yellow]")
+            if self.fold is not None or self.split == 'test':
+                raise FileNotFoundError(
+                    f"Required split file not found: {self.split_info_file}\n"
+                    f"Please run 'python scripts/prepare_data.py --k-folds N' to generate all necessary split files."
+                )
+            
+            console.print("[yellow]Default split file not found. Generating new single train/val/test splits...[/yellow]")
             self._generate_splits()
     
     def _generate_splits(self):
-        """Generate new train/val/test splits."""
-        
-        # Create directory for split info
+        """Generate a single default train/val/test split (original functionality)."""
         self.split_info_file.parent.mkdir(parents=True, exist_ok=True)
         
-        if self.patient_level_split:
-            # Split by patient to avoid data leakage
-            unique_patients = np.unique(self.patient_ids)
-            patient_labels = {}
-            
-            # Get majority class for each patient
-            for patient in unique_patients:
-                patient_mask = self.patient_ids == patient
-                patient_label = np.bincount(self.labels[patient_mask]).argmax()
-                patient_labels[patient] = patient_label
-            
-            # Split patients
-            patients = list(patient_labels.keys())
-            labels = list(patient_labels.values())
-            
-            # First split: train+val vs test (85% vs 15%)
-            train_val_patients, test_patients = train_test_split(
-                patients, test_size=0.15, stratify=labels, random_state=42
-            )
-            
-            # Second split: train vs val (70% vs 15% of total)
-            train_val_labels = [patient_labels[p] for p in train_val_patients]
-            train_patients, val_patients = train_test_split(
-                train_val_patients, test_size=0.176, stratify=train_val_labels, random_state=42
-            )
-            
-            # Get indices for each split
-            train_indices = [i for i, p in enumerate(self.patient_ids) if p in train_patients]
-            val_indices = [i for i, p in enumerate(self.patient_ids) if p in val_patients]
-            test_indices = [i for i, p in enumerate(self.patient_ids) if p in test_patients]
-            
-        else:
-            # Standard random split
-            indices = np.arange(len(self.image_paths))
-            
-            # Stratified split
-            train_val_indices, test_indices = train_test_split(
-                indices, test_size=0.15, stratify=self.labels, random_state=42
-            )
-            
-            train_indices, val_indices = train_test_split(
-                train_val_indices, test_size=0.176, stratify=self.labels[train_val_indices], random_state=42
-            )
+        indices = np.arange(len(self.image_paths))
+        train_val_indices, test_indices = train_test_split(indices, test_size=0.15, stratify=self.labels, random_state=42)
+        train_indices, val_indices = train_test_split(train_val_indices, test_size=0.176, stratify=self.labels[train_val_indices], random_state=42)
         
-        # Save split information
         split_data = {
-            'train': train_indices.tolist() if isinstance(train_indices, np.ndarray) else train_indices,
-            'val': val_indices.tolist() if isinstance(val_indices, np.ndarray) else val_indices,
-            'test': test_indices.tolist() if isinstance(test_indices, np.ndarray) else test_indices,
-            'metadata': {
-                'total_images': len(self.image_paths),
-                'patient_level_split': self.patient_level_split,
-                'split_ratios': {
-                    'train': len(train_indices) / len(self.image_paths),
-                    'val': len(val_indices) / len(self.image_paths),
-                    'test': len(test_indices) / len(self.image_paths)
-                }
-            }
+            'train': train_indices.tolist(),
+            'val': val_indices.tolist(),
+            'test': test_indices.tolist(),
         }
         
         with open(self.split_info_file, 'w') as f:
             json.dump(split_data, f, indent=2)
         
-        # Set indices for current split
-        if self.split == 'train':
-            self.indices = np.array(train_indices)
-        elif self.split == 'val':
-            self.indices = np.array(val_indices)
-        elif self.split == 'test':
-            self.indices = np.array(test_indices)
-        
-        # Print split summary
+        self.indices = np.array(split_data[self.split])
         self._print_split_summary(train_indices, val_indices, test_indices)
     
     def _print_split_summary(self, train_indices, val_indices, test_indices):
@@ -383,6 +313,7 @@ def create_data_loaders(
     num_workers: int = 4,
     transform_train: Optional[Callable] = None,
     transform_val: Optional[Callable] = None,
+    fold: Optional[int] = None,
     **dataset_kwargs
 ) -> Dict[str, DataLoader]:
     """
@@ -414,6 +345,7 @@ def create_data_loaders(
             root_dir=root_dir,
             split=split,
             transform=transform,
+            fold=fold,
             **dataset_kwargs
         )
         

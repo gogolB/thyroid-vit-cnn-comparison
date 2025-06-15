@@ -391,7 +391,8 @@ class UnifiedExperimentRunner:
             transform_val=val_transform,
             target_size=cfg.dataset.image_size,
             normalize=False,  # Normalization handled in transforms
-            patient_level_split=cfg.dataset.patient_level_split
+            patient_level_split=cfg.dataset.patient_level_split,
+            fold=cfg.dataset.fold if hasattr(cfg.dataset, 'fold') else 1,
         )
         
         console.print(f"[green]✓ Data loaders created[/green]")

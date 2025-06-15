@@ -69,6 +69,7 @@ wandb/
 mlruns/
 outputs/
 logs/
+visualizations/
 
 # System files
 .DS_Store

@@ -12,6 +12,8 @@ import numpy as np
 from typing import Dict, List, Tuple
 import argparse
 import json
+from sklearn.model_selection import train_test_split, StratifiedKFold
+
 
 # Add parent directory to path
 sys.path.append(str(Path(__file__).parent.parent))
@@ -284,122 +286,97 @@ def create_dataset_summary(data_dir: Path):
         console.print(f"[red]Error creating dataset: {e}[/red]")
         return None
 
+# --- K-FOLD ENHANCEMENT: New function to generate all split files ---
+def generate_kfold_splits(
+    data_dir: Path,
+    k: int,
+    test_size: float = 0.15,
+    random_state: int = 42
+):
+    """Generates a held-out test set and k-fold train/validation splits."""
+    console.print(Panel(f"[bold green]Generating {k}-Fold Cross-Validation Splits[/bold green]", border_style="green"))
+    splits_dir = data_dir.parent / 'splits'
+    splits_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Use the dataset class to load all file paths and labels
+    full_dataset = CARSThyroidDataset(root_dir=data_dir, split='all')
+    indices = np.arange(len(full_dataset.image_paths))
+    labels = full_dataset.labels
+
+    # 1. Create and save the held-out test set
+    train_val_indices, test_indices = train_test_split(
+        indices, test_size=test_size, stratify=labels, random_state=random_state
+    )
+    test_split_path = splits_dir / 'test_split.json'
+    with open(test_split_path, 'w') as f:
+        json.dump({'test': test_indices.tolist()}, f, indent=2)
+    console.print(f"✓ Saved held-out test set ({len(test_indices)} images) to [cyan]{test_split_path}[/cyan]")
+
+    # 2. Use StratifiedKFold on the remaining data
+    train_val_labels = labels[train_val_indices]
+    skf = StratifiedKFold(n_splits=k, shuffle=True, random_state=random_state)
+
+    for i, (train_fold_idx, val_fold_idx) in enumerate(skf.split(train_val_indices, train_val_labels)):
+        fold_num = i + 1
+        train_global_indices = train_val_indices[train_fold_idx]
+        val_global_indices = train_val_indices[val_fold_idx]
+        
+        fold_split_path = splits_dir / f'split_fold_{fold_num}.json'
+        with open(fold_split_path, 'w') as f:
+            json.dump({'train': train_global_indices.tolist(), 'val': val_global_indices.tolist()}, f, indent=2)
+        console.print(f"✓ Saved Fold {fold_num} ({len(train_global_indices)} train, {len(val_global_indices)} val) to [cyan]{fold_split_path}[/cyan]")
 
 def main():
     """Main data preparation function."""
-    
-    parser = argparse.ArgumentParser(
-        description="Prepare CARS thyroid dataset for training"
-    )
-    parser.add_argument(
-        "--data-dir", 
-        type=str, 
-        default="data/raw",
-        help="Path to raw data directory"
-    )
-    parser.add_argument(
-        "--visualize", 
-        action="store_true",
-        help="Run visualization after preparation"
-    )
-    parser.add_argument(
-        "--skip-validation", 
-        action="store_true",
-        help="Skip validation steps"
-    )
+    parser = argparse.ArgumentParser(description="Prepare CARS thyroid dataset for training")
+    parser.add_argument("--data-dir", type=str, default="data/raw", help="Path to raw data directory")
+    parser.add_argument("--visualize", action="store_true", help="Run visualization after preparation")
+    parser.add_argument("--skip-validation", action="store_true", help="Skip validation steps")
+    # --- K-FOLD ENHANCEMENT: New argument ---
+    parser.add_argument("--k-folds", type=int, default=None, help="If specified, generates k-fold splits and a held-out test set.")
     
     args = parser.parse_args()
     
-    # Banner
-    console.print(Panel.fit(
-        "[bold cyan]CARS Thyroid Dataset Preparation[/bold cyan]\n"
-        "[dim]Organizing and validating your microscopy images[/dim]",
-        border_style="blue"
-    ))
-    
+    console.print(Panel.fit("[bold cyan]CARS Thyroid Dataset Preparation[/bold cyan]", border_style="blue"))
     data_dir = Path(args.data_dir)
     
-    # Step 1: Check if directory exists
     if not data_dir.exists():
         console.print(f"[red]Error: Directory {data_dir} does not exist![/red]")
-        console.print("[yellow]Please create the directory and add your images:[/yellow]")
-        console.print("  mkdir -p data/raw/normal")
-        console.print("  mkdir -p data/raw/cancerous")
-        console.print("  # Copy your images to the appropriate directories")
         return
-    
-    # Step 2: Scan directory
+        
+    # --- K-FOLD ENHANCEMENT: Main logic branch ---
+    if args.k_folds:
+        if args.k_folds < 2:
+            console.print("[red]Error: --k-folds must be 2 or greater.[/red]")
+            return
+        generate_kfold_splits(data_dir, args.k_folds)
+        console.print("\n[bold green]✓ K-fold split generation complete![/bold green]")
+        return # End the script after generating splits
+
+    # --- BACKWARD COMPATIBILITY: Original script flow ---
     console.print("\n[bold]Step 1: Scanning for images[/bold]")
     class_images = scan_data_directory(data_dir)
-    
-    if not class_images:
-        console.print("[red]No images found! Please add images to the directory.[/red]")
-        return
-    
-    # Step 3: Check organization
+    if not class_images or 'unorganized' in class_images: return
+
     console.print("\n[bold]Step 2: Checking data organization[/bold]")
     organize_images(data_dir, class_images)
-    
-    if 'unorganized' in class_images:
-        return  # Need to organize first
-    
-    # Step 4: Validate images
+
     if not args.skip_validation:
         console.print("\n[bold]Step 3: Validating images[/bold]")
         validate_image_properties(class_images)
-        
-        # Step 5: Check patient IDs
         console.print("\n[bold]Step 4: Checking patient IDs[/bold]")
         check_patient_ids(class_images)
     
-    # Step 6: Create dataset and splits
-    console.print("\n[bold]Step 5: Creating dataset splits[/bold]")
-    dataset = create_dataset_summary(data_dir)
+    console.print("\n[bold]Step 5: Creating dataset summary & default split[/bold]")
+    dataset = create_dataset_summary(data_dir) # This uses the CARSThyroidDataset, which will create split_info.json if needed
     
-    if dataset:
-        # Step 7: Create data loaders
-        console.print("\n[bold]Step 6: Testing data loaders[/bold]")
-        try:
-            dataloaders = create_data_loaders(
-                root_dir=data_dir,
-                batch_size=32,
-                num_workers=4,
-                target_size=256,
-                normalize=True,
-                patient_level_split=False  # Disable patient-level splitting
-            )
-            console.print("[green]✓ Data loaders created successfully![/green]")
-            
-            # Test loading a batch
-            for split, loader in dataloaders.items():
-                images, labels = next(iter(loader))
-                console.print(f"[green]✓ {split} loader: batch shape = {images.shape}[/green]")
-                
-        except Exception as e:
-            console.print(f"[red]Error creating data loaders: {e}[/red]")
-    
-    # Step 8: Show augmentation options
-    console.print("\n[bold]Step 7: Available augmentation levels[/bold]")
-    for level in ['light', 'medium', 'heavy']:
-        console.print(f"\n[yellow]{level.upper()} augmentation:[/yellow]")
-        print_augmentation_summary(level)
-    
-    # Step 9: Visualize if requested
+    # The rest of your original main() continues here...
     if args.visualize and dataset:
-        console.print("\n[bold]Step 8: Running visualization[/bold]")
+        console.print("\n[bold]Step 6: Running visualization[/bold]")
         if Confirm.ask("Would you like to visualize the dataset?"):
-            output_dir = Path("visualization_outputs")
-            visualize_dataset(data_dir, output_dir)
+            visualize_dataset(data_dir, Path("visualization_outputs"))
     
-    # Final summary
-    console.print("\n" + "="*60)
-    console.print("[bold green]✓ Data preparation complete![/bold green]")
-    console.print("\n[cyan]Next steps:[/cyan]")
-    console.print("1. Review the generated splits in data/splits/split_info.json")
-    console.print("2. Check visualization outputs (if generated)")
-    console.print("3. Start training with: python train.py")
-    console.print("\n[dim]Your data is ready for training![/dim]")
-
+    console.print("\n[bold green]✓ Data preparation check complete![/bold green]")
 
 if __name__ == "__main__":
     main()

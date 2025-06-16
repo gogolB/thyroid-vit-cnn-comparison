@@ -28,7 +28,10 @@ class VisionTransformer(ModelBase):
         num_classes = self.config.get('num_classes', 2)
         img_size = self.config.get('img_size', 224)
         patch_size = self.config.get('patch_size', 16)
-        in_chans = self.config.get('in_channels', 3) # Get in_chans from config
+        # Prioritize in_chans from extra_params, then config.channels, then default to 3 (or 1 for CARS)
+        in_chans_extra = self.config.extra_params.get('in_chans') if hasattr(self.config, 'extra_params') else None
+        in_chans_dataset = self.config.get('channels') # From DatasetConfig part if merged
+        in_chans = in_chans_extra if in_chans_extra is not None else (in_chans_dataset if in_chans_dataset is not None else 3)
         
         # Construct the model name for timm.
         # For standard ViT models, append patch size and image size.

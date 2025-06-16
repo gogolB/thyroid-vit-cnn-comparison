@@ -26,8 +26,11 @@ class SwinTransformer(ModelBase):
         """
         pretrained = self.config.get('pretrained', True)
         num_classes = self.config.get('num_classes', 2)
-        img_size = self.config.get('img_size', 224) # Swin models in timm often take img_size
-        in_chans = self.config.get('in_channels', self.config.get('channels', 1))
+        img_size = self.config.get('img_size', 224)
+        # Prioritize in_chans from extra_params, then config.channels, then default to 1
+        in_chans_extra = self.config.extra_params.get('in_chans') if hasattr(self.config, 'extra_params') else None
+        in_chans_dataset = self.config.get('channels') # From DatasetConfig part if merged
+        in_chans = in_chans_extra if in_chans_extra is not None else (in_chans_dataset if in_chans_dataset is not None else 1)
 
         # Mapping from registered short names to full timm model names
         timm_model_name_map = {

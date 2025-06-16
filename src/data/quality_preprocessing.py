@@ -64,14 +64,21 @@ class QualityAwarePreprocessor(nn.Module):
             report = json.load(f)
         
         indices = {}
+        if 'dataset_stats' not in report:
+            return indices
+
         for split in ['train', 'val', 'test']:
             if split in report['dataset_stats']:
-                issues = report['dataset_stats'][split]['metrics']['quality_issues']
-                indices[split] = {
-                    'extreme_dark': set(issues['extreme_dark']),
-                    'low_contrast': set(issues['low_contrast']),
-                    'artifacts': set(issues['potential_artifacts'])
-                }
+                split_data = report['dataset_stats'].get(split, {})
+                metrics_data = split_data.get('metrics', {})
+                quality_issues_data = metrics_data.get('quality_issues', None)
+
+                if quality_issues_data:
+                    indices[split] = {
+                        'extreme_dark': set(quality_issues_data.get('extreme_dark', [])),
+                        'low_contrast': set(quality_issues_data.get('low_contrast', [])),
+                        'artifacts': set(quality_issues_data.get('potential_artifacts', []))
+                    }
         
         return indices
     
@@ -117,17 +124,27 @@ class QualityAwarePreprocessor(nn.Module):
     
     def apply_clahe(self, img: np.ndarray, clip_limit: float, grid_size: Tuple[int, int]) -> np.ndarray:
         """Apply CLAHE for contrast enhancement."""
-        # CLAHE works on uint8, so we need to convert
-        img_8bit = (img / 256).astype(np.uint8)
+        img_u16_min = np.min(img)
+        img_u16_max = np.max(img)
+
+        if img_u16_max == img_u16_min: # Image is already flat
+            return img.copy()
+
+        # Normalize to 0-255 for 8-bit CLAHE, scaling based on image's actual range
+        img_float = img.astype(np.float32)
+        # Scale to 0-1 based on its own range
+        img_norm_01 = (img_float - img_u16_min) / (img_u16_max - img_u16_min + 1e-8) # Add epsilon for safety
+        img_8bit = (img_norm_01 * 255.0).astype(np.uint8)
         
-        # Create CLAHE object
-        clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=grid_size)
+        clahe_obj = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=grid_size)
+        img_clahe_8bit = clahe_obj.apply(img_8bit)
         
-        # Apply CLAHE
-        img_clahe = clahe.apply(img_8bit)
+        # Scale back to original range [img_u16_min, img_u16_max]
+        img_clahe_float_01 = img_clahe_8bit.astype(np.float32) / 255.0
+        img_processed_u16_float = (img_clahe_float_01 * (img_u16_max - img_u16_min)) + img_u16_min
         
-        # Convert back to uint16 range
-        return img_clahe.astype(np.uint16) * 256
+        # Clip to ensure values are within uint16 range before casting
+        return np.clip(img_processed_u16_float, 0, 65535).astype(np.uint16)
     
     def suppress_artifacts(self, img: np.ndarray, percentile: float) -> np.ndarray:
         """Suppress bright artifacts using percentile clipping and filtering."""

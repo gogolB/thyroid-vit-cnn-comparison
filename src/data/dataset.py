@@ -482,19 +482,26 @@ class CARSThyroidDataset(Dataset):
         img_path = self.image_paths[idx]
         
         # Load image based on format
+        img = None
         if img_path.suffix.lower() in ['.tif', '.tiff']:
-            img = tifffile.imread(str(img_path))
-        else:
+            try:
+                img = tifffile.imread(str(img_path))
+            except Exception as e_tif: # Catch tifffile specific errors
+                # If tifffile fails, try OpenCV and PIL as fallbacks for TIF as well
+                pass # Fall through to OpenCV/PIL attempts
+
+        if img is None: # If TIF failed or it's not a TIF
             img = cv2.imread(str(img_path), cv2.IMREAD_UNCHANGED)
             if img is None: # Try with PIL as a fallback
                 try:
                     pil_img = Image.open(img_path)
                     img = np.array(pil_img)
-                except Exception as e:
-                    raise IOError(f"Failed to load image {img_path} with OpenCV and PIL: {e}")
+                except Exception as e_pil:
+                    # If tifffile also failed (or wasn't tried), and cv2 failed, this is the final error
+                    raise IOError(f"Failed to load image {img_path} with OpenCV and PIL: {e_pil}")
 
-        if img is None: # Should not happen if previous block works
-             raise IOError(f"Failed to load image {img_path}")
+        if img is None: # Should be caught by the PIL exception if all fail
+             raise IOError(f"Failed to load image {img_path} using all available backends.")
 
         # Ensure single channel (as per DatasetConfig.channels, assumed 1 for CARS)
         if len(img.shape) == 3:
@@ -544,7 +551,7 @@ class CARSThyroidDataset(Dataset):
     def __len__(self) -> int:
         return len(self.indices)
     
-    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, int]:
+    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
         """Get a single sample. idx is the direct index for the current split."""
         if idx >= len(self.image_paths): # self.image_paths now holds only the current split's data
              raise IndexError(f"Index {idx} is out of bounds for current split '{self.mode}' (len: {len(self.image_paths)}).")

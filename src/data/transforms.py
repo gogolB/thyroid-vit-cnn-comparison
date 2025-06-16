@@ -64,6 +64,9 @@ class MicroscopyNormalize(nn.Module):
         x = (x - self.input_range[0]) / (self.input_range[1] - self.input_range[0])
         x = x * (self.output_range[1] - self.output_range[0]) + self.output_range[0]
         
+        # Ensure output is strictly within the defined output range
+        x = torch.clamp(x, self.output_range[0], self.output_range[1])
+        
         return x
 
 

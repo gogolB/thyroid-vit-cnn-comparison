@@ -1,4 +1,5 @@
 import pytest
+import torch # Add missing import
 from src.models.registry import ModelRegistry
 # Assuming ModelBase and specific model classes (ResNet, VisionTransformer etc.) are importable
 # and correctly registered by the time these tests run.
@@ -79,34 +80,56 @@ class TestModels:
         assert model.model is not None, f"Inner 'model' attribute of {model_name} is None after creation."
 
     @pytest.mark.parametrize("model_name", ALL_REGISTERED_MODEL_NAMES)
-    def test_forward_pass(self, model_name, sample_batch): # sample_batch from conftest.py
+    def test_forward_pass(self, model_name, synthetic_batch_256_1chan): # Use the renamed fixture
         """Test forward pass of the model."""
         arch = 'cnn' if model_name in REGISTERED_MODEL_NAMES_CNN else 'vit'
-        config_data = {'name': model_name, 'architecture': arch, 'num_classes': 2, 'pretrained': False}
+        config_data = {'name': model_name, 'architecture': arch, 'num_classes': 2, 'pretrained': False, 'extra_params': {}}
+        current_img_size = 256 # Default
+        in_chans = 1 # Default for CARS
+
         if arch == 'vit':
-            config_data['img_size'] = 224 
+            current_img_size = 224
+            config_data['img_size'] = current_img_size
+            config_data['extra_params']['in_chans'] = 1 # ViTs should adapt to 1 channel via our wrapper
+            in_chans = 1 # Input tensor will be 1 channel
             if 'patch' in model_name:
-                 try:
+                try:
                     config_data['patch_size'] = int(model_name.split('_patch')[1].split('_')[0])
-                 except:
+                except:
                     config_data['patch_size'] = 16
+        elif model_name == 'inception_v3':
+            current_img_size = 299
+            in_chans = 1 # Test with 1 channel for CARS
+            config_data['extra_params']['img_size'] = current_img_size
+            config_data['extra_params']['in_chans'] = 1 # For InceptionV3, timm should adapt it
+            in_chans = 1
+        elif model_name.startswith('resnet'): # ResNets
+            in_chans = 3 # ResNets from torchvision expect 3 channels
+            config_data['extra_params']['in_chans'] = 3
+            # current_img_size remains 256
+        elif arch == 'cnn': # Other CNNs (EfficientNets, DenseNet)
+            in_chans = 1 # Test with 1 channel for CARS compatibility
+            config_data['extra_params']['in_chans'] = 1
+            # current_img_size remains 256 for these
 
         config = SimpleTestConfig(**config_data)
         model = ModelRegistry.create_model(config)
         
-        images, _ = sample_batch # Get images from the fixture
+        # Create images tensor dynamically based on current_img_size and in_chans
+        # Batch size from sample_batch fixture (conftest.py) is 4
+        batch_size = 4
+        images = torch.randn(batch_size, in_chans, current_img_size, current_img_size)
         
-        # Ensure model is in eval mode for stable behavior if it has dropout/batchnorm
-        model.eval() 
+        model.eval()
         
         try:
-            output = model(images) # Calls ModelBase.forward -> self.model.forward
+            output = model(images)
+            if isinstance(output, tuple) and model_name == 'inception_v3': # Handle InceptionV3 tuple output in eval
+                 output = output[0]
         except Exception as e:
-            pytest.fail(f"Forward pass for model {model_name} failed with error: {e}")
+            pytest.fail(f"Forward pass for model {model_name} (input shape {images.shape}) failed with error: {e}")
             
         assert output is not None, f"Forward pass for model {model_name} returned None."
-        # Expected output shape: (batch_size, num_classes)
-        # sample_batch has batch_size 4, num_classes is 2 by default in SimpleTestConfig
-        expected_shape = (4, config.num_classes)
+        expected_shape = (batch_size, config.num_classes)
         assert output.shape == expected_shape, \
             f"Output shape for model {model_name} is {output.shape}, expected {expected_shape}."

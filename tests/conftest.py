@@ -9,10 +9,17 @@ def sample_image() -> torch.Tensor:
     return torch.randn(1, 1, 256, 256) # Assuming CARS images are 1 channel (grayscale)
 
 @pytest.fixture
-def sample_batch() -> tuple[torch.Tensor, torch.Tensor]:
-    """Generate a sample batch of 4 images and corresponding labels."""
+def synthetic_batch_256_1chan() -> tuple[torch.Tensor, torch.Tensor]:
+    """Generate a sample batch of 4 images (1x256x256) and corresponding labels."""
     images = torch.randn(4, 1, 256, 256) # Batch of 4, 1 channel, 256x256
     labels = torch.randint(0, 2, (4,)) # Batch of 4 labels, for 2 classes (0 or 1)
+    return images, labels
+
+@pytest.fixture
+def synthetic_batch() -> tuple[torch.Tensor, torch.Tensor]:
+    """Generate a synthetic batch of 4 images (1x224x224) and labels for ViT tests."""
+    images = torch.randn(4, 1, 224, 224) # Batch of 4, 1 channel, 224x224
+    labels = torch.randint(0, 2, (4,))
     return images, labels
 
 @pytest.fixture

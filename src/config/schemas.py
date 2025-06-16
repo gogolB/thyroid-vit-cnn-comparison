@@ -22,6 +22,7 @@ class BaseModelConfig(BaseModel):
     architecture: str = Field(..., description="Model architecture type, e.g., cnn, vit")
     pretrained: bool = True
     num_classes: int = 2
+    img_size: Optional[int] = None # Add img_size here for ViTs primarily
     
     # For any additional model-specific parameters not covered explicitly
     # For example, dropout_rate, hidden_dim for ResNet50, or img_size, patch_size for ViTs
@@ -98,6 +99,7 @@ class DatasetConfig(BaseModel):
 
     val_split_ratio: float = 0.2 # Ratio for validation set if creating splits on the fly (not from file)
     test_split_ratio: Optional[float] = None # Ratio for test set if creating splits on the fly
+    random_seed: int = 42 # Seed for reproducible splits
     
     # Dataloader parameters (can also be part of TrainingConfig, but often grouped with dataset)
     # batch_size: int = 32 # Already in TrainingConfig, decide where it primarily lives. Let's keep it in TrainingConfig for now.
@@ -143,7 +145,7 @@ class MainAppConfig(BaseModel):
     paths: PathsConfig = Field(default_factory=PathsConfig)
     model: BaseModelConfig # This will be populated by a specific model config, e.g. ResNet50Config
     training: TrainingConfig = Field(default_factory=TrainingConfig)
-    dataset: DatasetConfig = Field(default_factory=DatasetConfig) # Added dataset group
+    dataset: DatasetConfig # Dataset configuration is required
 
     project_name: str = "thyroid-vit-cnn-comparison"
     experiment_name: str = "default_experiment"
@@ -189,11 +191,24 @@ if __name__ == '__main__':
         train_data = {"epochs": 5, "optimizer_params": opt_data, "monitor_metric": "val_acc", "monitor_mode": "max"}
         train_cfg = TrainingConfig(**train_data)
         logger.info(f"TrainingConfig: {train_cfg.model_dump_json(indent=2)}")
+
+        dataset_example_data = {
+            "name": "example_cars_thyroid",
+            "data_path": "/tmp/dummy_data", # Example path
+            "img_size": 256,
+            "channels": 1,
+            "val_split_ratio": 0.2,
+            "test_split_ratio": 0.1
+            # Add other fields as necessary for DatasetConfig to be valid
+        }
+        dataset_cfg = DatasetConfig(**dataset_example_data)
+        logger.info(f"DatasetConfig: {dataset_cfg.model_dump_json(indent=2)}")
         
         main_conf_data = {
             "paths": paths_data,
             "model": model_data,
             "training": train_data,
+            "dataset": dataset_example_data, # Provide dataset config
             "project_name": "TestProject",
             "experiment_name": "TestExperiment001"
         }

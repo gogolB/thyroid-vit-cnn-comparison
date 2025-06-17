@@ -13,3 +13,5 @@ defaults:
 gradient_clip_val: 1.0
 accumulate_grad_batches: 1 # Common for transformer training
 deterministic: true # Ensures reproducibility
+loss:
+  _target_: torch.nn.CrossEntropyLoss

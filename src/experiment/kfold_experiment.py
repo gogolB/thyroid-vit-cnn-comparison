@@ -117,13 +117,18 @@ class KFoldExperiment(BaseExperiment):
         # Assuming DatasetConfig can accept a `split_file` parameter.
         # Create a mutable copy of the dataset config to override the split file for this fold.
         # Handle both dictionary and OmegaConf types
-        if hasattr(self.config.dataset, '_is_omegaconf_config'):
-            fold_dataset_config_dict = OmegaConf.to_container(self.config.dataset, resolve=True)
-        else:
-            fold_dataset_config_dict = self.config.dataset
+        try:
+            # Convert OmegaConf DictConfig to standard dictionary if needed
+            if isinstance(self.config.dataset, DictConfig):
+                fold_dataset_config_dict = OmegaConf.to_container(self.config.dataset, resolve=True)
+            else:
+                fold_dataset_config_dict = self.config.dataset
+        except Exception as e:
+            logger.error(f"Error converting dataset config: {e}")
+            raise TypeError("Dataset config conversion failed") from e
             
         if not isinstance(fold_dataset_config_dict, dict):
-            logger.error(f"Dataset config from ExperimentConfig.dataset is not a dictionary, got {type(fold_dataset_config_dict)}. Cannot set split_file.")
+            logger.error(f"Dataset config must be a dictionary after conversion, got {type(fold_dataset_config_dict)}")
             raise TypeError("Dataset config must be a dictionary.")
 
         fold_dataset_config_dict["split_file"] = str(split_file_path)

@@ -1,0 +1,11 @@
+# Default K-Fold settings
+# These can be overridden by specific experiment configurations or command-line arguments.
+
+is_primary_kfold_experiment: false # Indicates if this is the main k-fold run or a single fold of a larger run
+num_folds: 5                   # Default number of folds for cross-validation
+split_dir: "data/splits"       # Directory containing pre-generated split files
+split_file_prefix: "split_fold_" # Prefix for split files (e.g., split_fold_1.json)
+save_fold_models: true         # Whether to save the model checkpoint for each fold
+log_fold_metrics: true         # Whether to log metrics for each individual fold
+
+# Can add other k-fold related parameters here if needed

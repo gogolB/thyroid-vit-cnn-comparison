@@ -85,8 +85,10 @@ class CARSThyroidDataset(Dataset):
     def _get_all_image_metadata(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
         Scans the data directory and returns all image paths, labels, and patient IDs.
+        Uses absolute paths relative to project root.
         """
-        data_root = Path(self.config.data_path)
+        project_root = Path(__file__).resolve().parent.parent.parent
+        data_root = project_root / self.config.data_path
         image_paths_list = []
         labels_list = []
         patient_ids_list = []

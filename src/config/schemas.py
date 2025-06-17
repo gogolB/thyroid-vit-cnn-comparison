@@ -47,24 +47,52 @@ class SchedulerParams(BaseModel): # Optional, if you plan to use schedulers exte
     # Add other common scheduler params
 
 class TrainingConfig(BaseModel):
-    seed: int = 42
-    epochs: int = 100
-    batch_size: int = 32
-    num_workers: int = 4
+    # seed: int = 42 # Removed, pl.Trainer doesn't take seed. Use pl.seed_everything().
+    # epochs: int = 100 # Removed, max_epochs in trainer config (e.g. trainer/default.yaml) is used for pl.Trainer
+    # batch_size: int = 32 # Removed, this is a DataLoader parameter, not for pl.Trainer directly
+    # num_workers: int = 4 # Removed, this is a DataLoader parameter, not for pl.Trainer directly
     
-    optimizer_params: OptimizerParams = Field(default_factory=OptimizerParams)
-    scheduler_params: Optional[SchedulerParams] = None # Make scheduler optional
+    # optimizer_params: OptimizerParams = Field(default_factory=OptimizerParams) # REMOVED - These are part of training_content for LightningModule
+    # scheduler_params: Optional[SchedulerParams] = None # REMOVED - These are part of training_content for LightningModule
 
     monitor_metric: str = "val_loss"
     monitor_mode: str = "min"
     early_stopping_patience: Optional[int] = 10 # Optional early stopping
     
-    save_top_k: int = 1
-    save_last: bool = True
-    log_every_n_steps: int = 50
+    # save_top_k: int = 1 # REMOVED - This is for ModelCheckpoint, sourced from training_content in KFoldExperiment
+    # save_last: bool = True # REMOVED - This is for ModelCheckpoint, sourced from training_content in KFoldExperiment
+    log_every_n_steps: int = 50 # This is a pl.Trainer arg
     
+    # Direct pl.Trainer arguments from configs/trainer/default.yaml
+    accelerator: Optional[str] = "auto"
+    devices: Optional[Any] = 1 # Can be int, str, or list
     precision: Optional[str] = None # e.g., "16-mixed", "32-true"
+    max_epochs: Optional[int] = None # Will be overridden by experiment if needed
+    min_epochs: Optional[int] = 1
+    max_steps: Optional[int] = -1
+    min_steps: Optional[int] = None
+    val_check_interval: Optional[Any] = 1.0 # float or int
+    check_val_every_n_epoch: Optional[int] = 1
+    num_sanity_val_steps: Optional[int] = 2
     gradient_clip_val: Optional[float] = None
+    gradient_clip_algorithm: Optional[str] = "norm"
+    accumulate_grad_batches: Optional[int] = None # Added
+    deterministic: Optional[bool] = None # Added
+    benchmark: Optional[bool] = False
+    strategy: Optional[str] = "auto" # Or specific like "ddp"
+    num_nodes: Optional[int] = 1
+    sync_batchnorm: Optional[bool] = False
+    # fast_dev_run, overfit_batches, limit_train_batches etc. are also trainer args
+    fast_dev_run: Optional[bool] = False
+    overfit_batches: Optional[float] = 0.0 # float or int
+    limit_train_batches: Optional[Any] = 1.0 # float or int
+    limit_val_batches: Optional[Any] = 1.0 # float or int
+    limit_test_batches: Optional[Any] = 1.0 # float or int
+    limit_predict_batches: Optional[Any] = 1.0 # float or int
+    enable_checkpointing: Optional[bool] = True
+    enable_progress_bar: Optional[bool] = True
+    enable_model_summary: Optional[bool] = True
+    # profiler, plugins can be added if needed
 
     # Example validator
     @field_validator('monitor_mode')
@@ -102,8 +130,8 @@ class DatasetConfig(BaseModel):
     random_seed: int = 42 # Seed for reproducible splits
     
     # Dataloader parameters (can also be part of TrainingConfig, but often grouped with dataset)
-    # batch_size: int = 32 # Already in TrainingConfig, decide where it primarily lives. Let's keep it in TrainingConfig for now.
-    # num_workers: int = 4 # Already in TrainingConfig
+    batch_size: int = 32 # Already in TrainingConfig, decide where it primarily lives. Let's keep it in TrainingConfig for now.
+    num_workers: int = 4 # Already in TrainingConfig
 
     # Image/Transform parameters (can be nested in a TransformConfig)
     img_size: int = 256 # Default based on sample_batch in conftest.py

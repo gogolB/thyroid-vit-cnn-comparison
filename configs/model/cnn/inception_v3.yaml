@@ -2,6 +2,7 @@ defaults:
   - base_cnn
 
 name: inception_v3
+architecture: cnn
 _target_: src.models.cnn.inception.Inception
 
 # Model parameters

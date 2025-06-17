@@ -2,7 +2,7 @@
 # ~50M parameters, balanced performance for medical imaging
 
 defaults:
-  - ../transformer/base_transformer
+  - transformer/base_transformer
   # - _self_
 
 name: swin_small
@@ -10,7 +10,7 @@ type: swin
 # architecture: vit # Inherited from base_transformer as 'transformer'
 params:
   # Architecture parameters
-  img_size: 256 # Overrides base_transformer's 224
+  img_size: 224 # Overrides base_transformer's 224
   patch_size: 4 # Overrides base_transformer's 16
   in_chans: 1  # Grayscale medical images
   # num_classes: 2 # Inherited from base

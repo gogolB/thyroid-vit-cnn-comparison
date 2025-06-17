@@ -19,6 +19,10 @@ class KFoldConfig:
     # Indicates if this k-fold process is part of a larger experiment
     # or if it's the main experiment type.
     is_primary_kfold_experiment: bool = False
+    # Whether to save models for each fold
+    save_fold_models: bool = True
+    # Whether to log metrics for each fold
+    log_fold_metrics: bool = True
 
 
 @dataclass
@@ -52,7 +56,7 @@ class ExperimentConfig:
     """
     name: str = "base_experiment"
     description: Optional[str] = None
-    output_dir: str = "outputs/${hydra.job.name}" # Hydra will resolve this
+    output_dir: str = "outputs/" # Hydra will resolve this
     seed: int = 42
 
     # Placeholder for model-specific configurations
@@ -61,8 +65,11 @@ class ExperimentConfig:
     # Placeholder for dataset-specific configurations
     dataset: Any = field(default_factory=dict)
 
-    # Placeholder for trainer-specific configurations
+    # Placeholder for trainer-specific configurations (PL Trainer args like accelerator, devices, max_epochs for the run)
     trainer: Any = field(default_factory=dict)
+
+    # Placeholder for training content configurations (loss, optimizer_params, batch_size, etc.)
+    training_content: Any = field(default_factory=dict)
 
     # K-Fold specific configuration
     kfold: Optional[KFoldConfig] = None

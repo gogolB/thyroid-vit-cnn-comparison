@@ -10,4 +10,6 @@ defaults:
 # Transformer-specific training parameters can be added here
 # For example:
 # transformer_specific_param: value
-# gradient_clip_val: 1.0 # Often used with transformers
+gradient_clip_val: 1.0
+accumulate_grad_batches: 1 # Common for transformer training
+deterministic: true # Ensures reproducibility

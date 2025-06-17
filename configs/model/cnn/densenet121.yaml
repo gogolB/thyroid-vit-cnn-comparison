@@ -2,6 +2,7 @@ defaults:
   - base_cnn
 
 name: densenet121
+architecture: cnn # Explicitly add architecture
 _target_: src.models.cnn.densenet.DenseNet121
 
 # Model parameters

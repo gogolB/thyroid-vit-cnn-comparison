@@ -1,15 +1,23 @@
 defaults:
-  - model: resnet50
+  - model: cnn/resnet50 # Changed to reflect actual path
   - dataset: cars
-  - training: standard
-  - augmentation: basic
+  - training: cnn # Changed from standard to cnn
+  - augmentation: no_aug # Changed from basic to no_aug
   - trainer: default
+  - kfold: default
+  - params: default
   - _self_
 
-experiment_name: "${model.name}_${dataset.name}_${now:%Y-%m-%d_%H-%M-%S}"
+experiment_name: "${model.name}_${dataset.name}_${now:%Y-%m-%d_%H-%M-%S}" # Reverted to dataset.name
 seed: 42
 device: auto
 
+hydra:
+  runtime:
+    output_dir: "outputs/${experiment_name}"  # Set output directory to current directory
+  job:
+    name: "${experiment_name}"  # Use the experiment_name variable
+    chdir: false  # Disable changing working directory because we set run.dir to current directory
 # Use simple relative paths instead of Hydra interpolations
 paths:
   data_dir: "data"
@@ -20,6 +28,5 @@ wandb:
   project: "thyroid-classification"
   entity: null
   tags:
-    - ${model.architecture}
-    - ${dataset.name}
+    - ${dataset.name} # Reverted to dataset.name for wandb
   mode: online

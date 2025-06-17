@@ -24,7 +24,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 # Add other common imports that these modules might share, like from torchmetrics, etc.
 from torch.optim.lr_scheduler import CosineAnnealingLR
-from torchmetrics import Accuracy, AUROC, F1Score # Specific imports for ThyroidCNNModule
+from torchmetrics import Accuracy, AUROC, F1Score, Specificity, Recall, Precision, StatScores # Specific imports for ThyroidCNNModule
 
 # Project-specific imports (will be needed when modules are moved here)
 from src.models.vit.deit_models import DistillationLoss
@@ -50,17 +50,29 @@ class ThyroidCNNModule(pl.LightningModule):
         self.criterion = hydra.utils.instantiate(config.training.loss)
         
         # Metrics
-        num_classes = config.dataset.get('num_classes', 2)  # Default to binary
-        self.train_acc = Accuracy(task='binary' if num_classes == 2 else 'multiclass',
-                                  num_classes=num_classes)
-        self.val_acc = Accuracy(task='binary' if num_classes == 2 else 'multiclass',
-                                num_classes=num_classes)
-        self.val_auc = AUROC(task='binary' if num_classes == 2 else 'multiclass',
-                             num_classes=num_classes)
-        self.val_f1 = F1Score(task='binary' if num_classes == 2 else 'multiclass',
-                              num_classes=num_classes)
-        self.test_acc = Accuracy(task='binary' if num_classes == 2 else 'multiclass',
-                                 num_classes=num_classes)
+        self.num_classes = config.dataset.get('num_classes', 2)  # Default to binary
+        self.metric_task = 'binary' if self.num_classes == 2 else 'multiclass'
+        
+        # Determine num_classes argument for AUROC (None for binary, self.num_classes for multiclass)
+        auroc_num_classes_arg = self.num_classes if self.metric_task == 'multiclass' else None
+
+        self.train_acc = Accuracy(task=self.metric_task, num_classes=self.num_classes)
+        
+        self.val_acc = Accuracy(task=self.metric_task, num_classes=self.num_classes)
+        self.val_auc = AUROC(task=self.metric_task, num_classes=auroc_num_classes_arg)
+        self.val_f1 = F1Score(task=self.metric_task, num_classes=self.num_classes)
+        self.val_specificity = Specificity(task=self.metric_task, num_classes=self.num_classes)
+        self.val_sensitivity = Recall(task=self.metric_task, num_classes=self.num_classes) # Sensitivity is Recall
+        self.val_ppv = Precision(task=self.metric_task, num_classes=self.num_classes) # PPV is Precision
+        self.val_stat_scores = StatScores(task=self.metric_task, num_classes=self.num_classes, average='macro' if self.metric_task == 'multiclass' else None)
+
+        self.test_acc = Accuracy(task=self.metric_task, num_classes=self.num_classes)
+        self.test_auc = AUROC(task=self.metric_task, num_classes=auroc_num_classes_arg) # Added for completeness if needed, though not explicitly requested for test_step logging here
+        self.test_f1 = F1Score(task=self.metric_task, num_classes=self.num_classes) # Added for completeness
+        self.test_specificity = Specificity(task=self.metric_task, num_classes=self.num_classes)
+        self.test_sensitivity = Recall(task=self.metric_task, num_classes=self.num_classes)
+        self.test_ppv = Precision(task=self.metric_task, num_classes=self.num_classes)
+        self.test_stat_scores = StatScores(task=self.metric_task, num_classes=self.num_classes, average='macro' if self.metric_task == 'multiclass' else None)
         
         # For warmup
         self.warmup_epochs = config.training.get('warmup_epochs', 0)
@@ -130,22 +142,33 @@ class ThyroidCNNModule(pl.LightningModule):
         
         # For AUC, we need probabilities
         probs = torch.softmax(logits, dim=1)
-        if self.config.dataset.get('num_classes', 2) == 2:
-            # Binary classification - use probability of positive class
-            auc = self.val_auc(probs[:, 1], y)
-        else:
-            # Multi-class classification
-            auc = self.val_auc(probs, y)
-            
-        f1 = self.val_f1(preds, y)
+        # Use probs[:, 1] for binary AUROC, probs for multiclass
+        auc_probs_input = probs[:, 1] if self.metric_task == 'binary' and probs.shape[1] == self.num_classes else probs
         
+        self.val_auc.update(auc_probs_input, y)
+        self.val_f1.update(preds, y)
+        self.val_specificity.update(preds, y)
+        self.val_sensitivity.update(preds, y)
+        self.val_ppv.update(preds, y)
+        self.val_stat_scores.update(preds, y)
+
         # Log metrics
         self.log('val_loss', loss, on_step=False, on_epoch=True, prog_bar=True)
-        self.log('val_acc', acc, on_step=False, on_epoch=True, prog_bar=True)
-        self.log('val_auc', auc, on_step=False, on_epoch=True, prog_bar=True)
-        self.log('val_f1', f1, on_step=False, on_epoch=True, prog_bar=True)
+        self.log('val_acc', self.val_acc, on_step=False, on_epoch=True, prog_bar=True)
+        self.log('val_auc', self.val_auc, on_step=False, on_epoch=True, prog_bar=True)
+        self.log('val_f1', self.val_f1, on_step=False, on_epoch=True, prog_bar=True)
+        self.log('val_specificity', self.val_specificity, on_step=False, on_epoch=True, prog_bar=True)
+        self.log('val_sensitivity', self.val_sensitivity, on_step=False, on_epoch=True, prog_bar=True)
+        self.log('val_ppv', self.val_ppv, on_step=False, on_epoch=True, prog_bar=True)
         
-        return {'val_loss': loss, 'val_acc': acc}
+        # Calculate and log NPV
+        stat_scores_output = self.val_stat_scores.compute() # Compute once
+        tn = stat_scores_output[2] # Index for True Negatives
+        fn = stat_scores_output[3] # Index for False Negatives
+        npv = tn / (tn + fn + 1e-6)
+        self.log('val_npv', npv, on_step=False, on_epoch=True, prog_bar=True)
+        
+        return {'val_loss': loss, 'val_acc': self.val_acc.compute()}
     
     def test_step(self, batch, batch_idx):
         x, y = batch
@@ -161,29 +184,77 @@ class ThyroidCNNModule(pl.LightningModule):
         
         # Calculate accuracy
         preds = torch.argmax(logits, dim=1)
-        acc = self.test_acc(preds, y)
+        
+        self.test_acc.update(preds, y)
+        # For AUC and F1 on test, if needed (using probs for AUC)
+        probs = torch.softmax(logits, dim=1)
+        auc_probs_input = probs[:, 1] if self.metric_task == 'binary' and probs.shape[1] == self.num_classes else probs
+        self.test_auc.update(auc_probs_input, y)
+        self.test_f1.update(preds, y)
+
+        self.test_specificity.update(preds, y)
+        self.test_sensitivity.update(preds, y)
+        self.test_ppv.update(preds, y)
+        self.test_stat_scores.update(preds, y)
         
         # Log metrics
         self.log('test_loss', loss, on_step=False, on_epoch=True)
-        self.log('test_acc', acc, on_step=False, on_epoch=True)
+        self.log('test_acc', self.test_acc, on_step=False, on_epoch=True)
+        self.log('test_auc', self.test_auc, on_step=False, on_epoch=True)
+        self.log('test_f1', self.test_f1, on_step=False, on_epoch=True)
+        self.log('test_specificity', self.test_specificity, on_step=False, on_epoch=True)
+        self.log('test_sensitivity', self.test_sensitivity, on_step=False, on_epoch=True)
+        self.log('test_ppv', self.test_ppv, on_step=False, on_epoch=True)
+
+        # Calculate and log NPV
+        stat_scores_output = self.test_stat_scores.compute() # Compute once
+        tn = stat_scores_output[2] # Index for True Negatives
+        fn = stat_scores_output[3] # Index for False Negatives
+        npv = tn / (tn + fn + 1e-6)
+        self.log('test_npv', npv, on_step=False, on_epoch=True)
         
-        return {'test_loss': loss, 'test_acc': acc}
+        # Return all computed metrics for potential aggregation
+        # The trainer.test() call will aggregate these if logged with on_epoch=True
+        return {
+            'test_loss': loss,
+            'test_acc': self.test_acc.compute(), # Return computed value
+            'test_auc': self.test_auc.compute(),
+            'test_f1': self.test_f1.compute(),
+            'test_specificity': self.test_specificity.compute(),
+            'test_sensitivity': self.test_sensitivity.compute(),
+            'test_ppv': self.test_ppv.compute(),
+            'test_npv': npv
+        }
     
     def on_test_epoch_end(self):
-        # Get average test metrics
-        test_acc = self.test_acc.compute()
+        # Get average test metrics (already computed and logged in test_step if on_epoch=True)
+        # This hook can be used for additional summary or cleanup if needed.
+        # For now, main logging is in test_step.
+        # Example: if you want to print all final metrics:
+        final_test_acc = self.test_acc.compute()
+        final_test_auc = self.test_auc.compute()
+        final_test_f1 = self.test_f1.compute()
+        final_test_specificity = self.test_specificity.compute()
+        final_test_sensitivity = self.test_sensitivity.compute()
+        final_test_ppv = self.test_ppv.compute()
         
-        # Log final test results
-        self.log('test_final_acc', test_acc)
+        stat_scores_output = self.test_stat_scores.compute()
+        final_test_npv = stat_scores_output[2] / (stat_scores_output[2] + stat_scores_output[3] + 1e-6)
+
+        self.log('test_final_acc', final_test_acc) # Already logged via test_acc metric object
+        # self.log('test_final_auc', final_test_auc) # etc.
+
+        print(f"\nFinal Test Results (from on_test_epoch_end):")
+        print(f"  Accuracy: {final_test_acc:.4f}")
+        print(f"  AUROC: {final_test_auc:.4f}")
+        print(f"  F1 Score: {final_test_f1:.4f}")
+        print(f"  Specificity: {final_test_specificity:.4f}")
+        print(f"  Sensitivity: {final_test_sensitivity:.4f}")
+        print(f"  PPV: {final_test_ppv:.4f}")
+        print(f"  NPV: {final_test_npv:.4f}")
         
-        # Print results
-        # console.print(f"\n[bold green]Test Results:[/bold green]") # console is not defined here
-        # console.print(f"  Test Accuracy: {test_acc:.4f}")
-        print(f"\nTest Results:") # Using basic print
-        print(f"  Test Accuracy: {test_acc:.4f}")
-        
-        # Reset metrics
-        self.test_acc.reset()
+        # Reset metrics (they are reset automatically by PL if logged with on_epoch=True)
+        # self.test_acc.reset() # Not strictly necessary here
     
     def configure_optimizers(self):
         """Configure optimizer and scheduler with warmup support."""
@@ -239,15 +310,32 @@ class ThyroidCNNModule(pl.LightningModule):
 class ThyroidViTModule(pl.LightningModule):
     """Lightning module for Vision Transformer thyroid classification."""
     
-    def __init__(self, config: DictConfig):
+    def __init__(self, config: DictConfig, optimizer_params: Optional[Dict] = None):
         """Initialize the ViT module.
         
         Args:
             config: Hydra configuration object
+            optimizer_params: Optional dictionary of optimizer parameters to override config
         """
+        from src.utils.logging import get_logger
+        logger = get_logger(__name__)
+        
         super().__init__()
         self.config = config
+        self.optimizer_params = optimizer_params
         self.save_hyperparameters()
+        
+        # Load optimizer params from JSON file if not provided
+        if optimizer_params is None:
+            try:
+                import json
+                with open('configs/vit_optimizer_params.json', 'r') as f:
+                    optimizer_params = json.load(f)
+                    self.optimizer_params = optimizer_params
+                    logger.info(f"Loaded optimizer parameters from JSON: {optimizer_params}")
+            except Exception as e:
+                logger.error(f"Failed to load optimizer parameters from JSON: {e}")
+                raise ValueError("Optimizer parameters not provided and failed to load from JSON")
         
         # Create model
         self.model = self._create_model()
@@ -261,12 +349,29 @@ class ThyroidViTModule(pl.LightningModule):
             label_smoothing = 0.0
         self.criterion = nn.CrossEntropyLoss(label_smoothing=label_smoothing)
         
-        # Metrics (using underscores for compatibility)
-        self.train_acc = Accuracy(task='binary')
-        self.val_acc = Accuracy(task='binary')
-        self.val_auc = AUROC(task='binary')
-        self.val_f1 = F1Score(task='binary')
-        self.test_acc = Accuracy(task='binary')
+        # Metrics
+        self.num_classes = config.dataset.get('num_classes', 2)
+        self.metric_task = 'binary' if self.num_classes == 2 else 'multiclass'
+
+        auroc_num_classes_arg = self.num_classes if self.metric_task == 'multiclass' else None
+
+        self.train_acc = Accuracy(task=self.metric_task, num_classes=self.num_classes)
+        
+        self.val_acc = Accuracy(task=self.metric_task, num_classes=self.num_classes)
+        self.val_auc = AUROC(task=self.metric_task, num_classes=auroc_num_classes_arg)
+        self.val_f1 = F1Score(task=self.metric_task, num_classes=self.num_classes)
+        self.val_specificity = Specificity(task=self.metric_task, num_classes=self.num_classes)
+        self.val_sensitivity = Recall(task=self.metric_task, num_classes=self.num_classes)
+        self.val_ppv = Precision(task=self.metric_task, num_classes=self.num_classes)
+        self.val_stat_scores = StatScores(task=self.metric_task, num_classes=self.num_classes, average='macro' if self.metric_task == 'multiclass' else None)
+
+        self.test_acc = Accuracy(task=self.metric_task, num_classes=self.num_classes)
+        self.test_auc = AUROC(task=self.metric_task, num_classes=auroc_num_classes_arg)
+        self.test_f1 = F1Score(task=self.metric_task, num_classes=self.num_classes)
+        self.test_specificity = Specificity(task=self.metric_task, num_classes=self.num_classes)
+        self.test_sensitivity = Recall(task=self.metric_task, num_classes=self.num_classes)
+        self.test_ppv = Precision(task=self.metric_task, num_classes=self.num_classes)
+        self.test_stat_scores = StatScores(task=self.metric_task, num_classes=self.num_classes, average='macro' if self.metric_task == 'multiclass' else None)
         
         # For attention visualization
         self.log_attention_maps = bool(config.get('log_attention_maps', False))
@@ -384,16 +489,31 @@ class ThyroidViTModule(pl.LightningModule):
         loss = self.criterion(logits, labels)
         
         preds = torch.argmax(logits, dim=1)
-        probs = F.softmax(logits, dim=1)[:, 1]
+        probs = F.softmax(logits, dim=1)
+        # Use probs[:, 1] for binary AUROC, probs for multiclass
+        auc_probs_input = probs[:, 1] if self.metric_task == 'binary' and probs.shape[1] == self.num_classes else probs
         
-        self.val_acc(preds, labels)
-        self.val_auc(probs, labels)
-        self.val_f1(preds, labels)
+        self.val_acc.update(preds, labels)
+        self.val_auc.update(auc_probs_input, labels)
+        self.val_f1.update(preds, labels)
+        self.val_specificity.update(preds, labels)
+        self.val_sensitivity.update(preds, labels)
+        self.val_ppv.update(preds, labels)
+        self.val_stat_scores.update(preds, labels)
         
         self.log('val_loss', loss, on_epoch=True, prog_bar=True)
         self.log('val_acc', self.val_acc, on_epoch=True, prog_bar=True)
-        self.log('val_auc', self.val_auc, on_epoch=True)
-        self.log('val_f1', self.val_f1, on_epoch=True)
+        self.log('val_auc', self.val_auc, on_epoch=True, prog_bar=True)
+        self.log('val_f1', self.val_f1, on_epoch=True, prog_bar=True)
+        self.log('val_specificity', self.val_specificity, on_epoch=True, prog_bar=True)
+        self.log('val_sensitivity', self.val_sensitivity, on_epoch=True, prog_bar=True)
+        self.log('val_ppv', self.val_ppv, on_epoch=True, prog_bar=True)
+
+        stat_scores_output = self.val_stat_scores.compute()
+        tn = stat_scores_output[2]
+        fn = stat_scores_output[3]
+        npv = tn / (tn + fn + 1e-6)
+        self.log('val_npv', npv, on_epoch=True, prog_bar=True)
         
         if self.log_attention_maps and batch_idx == 0 and hasattr(self.model, 'get_attention_maps'):
             self._log_attention_maps(images, labels)
@@ -417,21 +537,53 @@ class ThyroidViTModule(pl.LightningModule):
         loss = self.criterion(logits, labels)
         
         preds = torch.argmax(logits, dim=1)
-        acc = self.test_acc(preds, labels)
+        
+        self.test_acc.update(preds, labels)
+        probs = F.softmax(logits, dim=1)
+        auc_probs_input = probs[:, 1] if self.metric_task == 'binary' and probs.shape[1] == self.num_classes else probs
+        self.test_auc.update(auc_probs_input, labels)
+        self.test_f1.update(preds, labels)
+        self.test_specificity.update(preds, labels)
+        self.test_sensitivity.update(preds, labels)
+        self.test_ppv.update(preds, labels)
+        self.test_stat_scores.update(preds, labels)
         
         self.log('test_loss', loss, on_epoch=True)
-        self.log('test_acc', acc, on_epoch=True)
+        self.log('test_acc', self.test_acc, on_epoch=True)
+        self.log('test_auc', self.test_auc, on_epoch=True)
+        self.log('test_f1', self.test_f1, on_epoch=True)
+        self.log('test_specificity', self.test_specificity, on_epoch=True)
+        self.log('test_sensitivity', self.test_sensitivity, on_epoch=True)
+        self.log('test_ppv', self.test_ppv, on_epoch=True)
+
+        stat_scores_output = self.test_stat_scores.compute()
+        tn = stat_scores_output[2]
+        fn = stat_scores_output[3]
+        npv = tn / (tn + fn + 1e-6)
+        self.log('test_npv', npv, on_epoch=True)
         
-        return loss
+        return {
+            'test_loss': loss,
+            'test_acc': self.test_acc.compute(),
+            'test_auc': self.test_auc.compute(),
+            'test_f1': self.test_f1.compute(),
+            'test_specificity': self.test_specificity.compute(),
+            'test_sensitivity': self.test_sensitivity.compute(),
+            'test_ppv': self.test_ppv.compute(),
+            'test_npv': npv
+        }
     
     def configure_optimizers(self):
         """Configure optimizers and schedulers."""
-        if not hasattr(self.config.training, 'optimizer_params'):
-            raise ValueError("Missing optimizer_params in training configuration for ThyroidViTModule.")
-
-        opt_params_config = self.config.training.optimizer_params
-        # Convert DictConfig to dict if necessary for easier access, or use .get()
-        opt_params = OmegaConf.to_container(opt_params_config, resolve=True) if isinstance(opt_params_config, DictConfig) else opt_params_config
+        # Prefer directly passed optimizer_params, fallback to config
+        if self.optimizer_params is not None:
+            opt_params = self.optimizer_params
+        else:
+            if not hasattr(self.config.training, 'optimizer_params'):
+                raise ValueError("Missing optimizer_params in training configuration for ThyroidViTModule.")
+            opt_params_config = self.config.training.optimizer_params
+            # Convert DictConfig to dict if necessary
+            opt_params = OmegaConf.to_container(opt_params_config, resolve=True) if isinstance(opt_params_config, DictConfig) else opt_params_config
 
 
         base_lr = float(opt_params.get('lr', 0.001))
@@ -555,9 +707,28 @@ class ThyroidViTModule(pl.LightningModule):
     
     def on_test_epoch_end(self):
         """Called at the end of test epoch."""
-        test_acc = self.test_acc.compute()
-        self.log('final_test_acc', test_acc)
-        print(f"\nTest Accuracy: {test_acc:.4f}")
+        # Similar to ThyroidCNNModule, main logging is in test_step.
+        # This hook can be used for additional summary.
+        final_test_acc = self.test_acc.compute()
+        final_test_auc = self.test_auc.compute()
+        final_test_f1 = self.test_f1.compute()
+        final_test_specificity = self.test_specificity.compute()
+        final_test_sensitivity = self.test_sensitivity.compute()
+        final_test_ppv = self.test_ppv.compute()
+        
+        stat_scores_output = self.test_stat_scores.compute()
+        final_test_npv = stat_scores_output[2] / (stat_scores_output[2] + stat_scores_output[3] + 1e-6)
+
+        # self.log('final_test_acc', final_test_acc) # Already logged via metric object
+
+        print(f"\nFinal Test Results ViT (from on_test_epoch_end):")
+        print(f"  Accuracy: {final_test_acc:.4f}")
+        print(f"  AUROC: {final_test_auc:.4f}")
+        print(f"  F1 Score: {final_test_f1:.4f}")
+        print(f"  Specificity: {final_test_specificity:.4f}")
+        print(f"  Sensitivity: {final_test_sensitivity:.4f}")
+        print(f"  PPV: {final_test_ppv:.4f}")
+        print(f"  NPV: {final_test_npv:.4f}")
 # Standard library imports
 # (already present, no change here)
 
@@ -718,15 +889,30 @@ class ThyroidDistillationModule(pl.LightningModule):
     
     def _setup_metrics(self):
         """Setup metrics for tracking performance."""
-        num_classes = self.config.dataset.get('num_classes', 2)
-        task_type = 'binary' if num_classes == 2 else 'multiclass'
+        self.num_classes = self.config.dataset.get('num_classes', 2)
+        self.metric_task = 'binary' if self.num_classes == 2 else 'multiclass'
+        
+        auroc_num_classes_arg = self.num_classes if self.metric_task == 'multiclass' else None
 
-        self.train_acc = Accuracy(task=task_type, num_classes=num_classes)
-        self.val_acc = Accuracy(task=task_type, num_classes=num_classes)
-        self.val_auc = AUROC(task=task_type, num_classes=num_classes if task_type == 'multiclass' else None)
-        self.val_f1 = F1Score(task=task_type, num_classes=num_classes)
-        self.test_acc = Accuracy(task=task_type, num_classes=num_classes)
-        self.teacher_agreement = Accuracy(task=task_type, num_classes=num_classes) 
+        self.train_acc = Accuracy(task=self.metric_task, num_classes=self.num_classes)
+        
+        self.val_acc = Accuracy(task=self.metric_task, num_classes=self.num_classes)
+        self.val_auc = AUROC(task=self.metric_task, num_classes=auroc_num_classes_arg)
+        self.val_f1 = F1Score(task=self.metric_task, num_classes=self.num_classes)
+        self.val_specificity = Specificity(task=self.metric_task, num_classes=self.num_classes)
+        self.val_sensitivity = Recall(task=self.metric_task, num_classes=self.num_classes)
+        self.val_ppv = Precision(task=self.metric_task, num_classes=self.num_classes)
+        self.val_stat_scores = StatScores(task=self.metric_task, num_classes=self.num_classes, average='macro' if self.metric_task == 'multiclass' else None)
+        
+        self.test_acc = Accuracy(task=self.metric_task, num_classes=self.num_classes)
+        self.test_auc = AUROC(task=self.metric_task, num_classes=auroc_num_classes_arg)
+        self.test_f1 = F1Score(task=self.metric_task, num_classes=self.num_classes)
+        self.test_specificity = Specificity(task=self.metric_task, num_classes=self.num_classes)
+        self.test_sensitivity = Recall(task=self.metric_task, num_classes=self.num_classes)
+        self.test_ppv = Precision(task=self.metric_task, num_classes=self.num_classes)
+        self.test_stat_scores = StatScores(task=self.metric_task, num_classes=self.num_classes, average='macro' if self.metric_task == 'multiclass' else None)
+
+        self.teacher_agreement = Accuracy(task=self.metric_task, num_classes=self.num_classes)
     
     def get_current_alpha(self) -> float:
         """Get current distillation weight based on progressive schedule."""
@@ -816,20 +1002,33 @@ class ThyroidDistillationModule(pl.LightningModule):
                  probs = torch.stack([1-probs.squeeze(), probs.squeeze()], dim=1) if self.val_auc.task == 'binary' and probs.ndim ==1 else probs
 
 
-        acc = self.val_acc(preds, labels)
-        # For binary AUROC, typically pass probability of positive class
-        auc_probs_input = probs[:, 1] if self.val_auc.task == 'binary' and probs.shape[1] == 2 else probs
-        auc = self.val_auc(auc_probs_input, labels)
-        f1 = self.val_f1(preds, labels)
+        self.val_acc.update(preds, labels)
+        auc_probs_input = probs[:, 1] if self.metric_task == 'binary' and probs.shape[1] == self.num_classes else probs
+        self.val_auc.update(auc_probs_input, labels)
+        self.val_f1.update(preds, labels)
+        self.val_specificity.update(preds, labels)
+        self.val_sensitivity.update(preds, labels)
+        self.val_ppv.update(preds, labels)
+        self.val_stat_scores.update(preds, labels)
         
         teacher_outputs = self.get_teacher_outputs(images)
         teacher_preds = teacher_outputs.argmax(dim=1)
-        val_agreement = (preds == teacher_preds).float().mean()
+        val_agreement = (preds == teacher_preds).float().mean() # This is a manual calculation, not using torchmetrics object
         
         self.log('val_loss', loss, on_step=False, on_epoch=True, prog_bar=True)
-        self.log('val_acc', acc, on_step=False, on_epoch=True, prog_bar=True)
-        self.log('val_auc', auc, on_step=False, on_epoch=True)
-        self.log('val_f1', f1, on_step=False, on_epoch=True)
+        self.log('val_acc', self.val_acc, on_step=False, on_epoch=True, prog_bar=True)
+        self.log('val_auc', self.val_auc, on_step=False, on_epoch=True, prog_bar=True)
+        self.log('val_f1', self.val_f1, on_step=False, on_epoch=True, prog_bar=True)
+        self.log('val_specificity', self.val_specificity, on_step=False, on_epoch=True, prog_bar=True)
+        self.log('val_sensitivity', self.val_sensitivity, on_step=False, on_epoch=True, prog_bar=True)
+        self.log('val_ppv', self.val_ppv, on_step=False, on_epoch=True, prog_bar=True)
+        
+        stat_scores_output = self.val_stat_scores.compute()
+        tn = stat_scores_output[2]
+        fn = stat_scores_output[3]
+        npv = tn / (tn + fn + 1e-6)
+        self.log('val_npv', npv, on_step=False, on_epoch=True, prog_bar=True)
+        
         self.log('val_teacher_agreement', val_agreement, on_step=False, on_epoch=True)
         
         return loss
@@ -842,9 +1041,40 @@ class ThyroidDistillationModule(pl.LightningModule):
             outputs = outputs[0]
         
         preds = outputs.argmax(dim=1)
-        acc = self.test_acc(preds, labels)
-        self.log('test_acc', acc, on_step=False, on_epoch=True)
-        return acc
+        
+        self.test_acc.update(preds, labels)
+        # For other metrics on test set
+        probs = F.softmax(outputs, dim=1)
+        auc_probs_input = probs[:, 1] if self.metric_task == 'binary' and probs.shape[1] == self.num_classes else probs
+        self.test_auc.update(auc_probs_input, labels)
+        self.test_f1.update(preds, labels)
+        self.test_specificity.update(preds, labels)
+        self.test_sensitivity.update(preds, labels)
+        self.test_ppv.update(preds, labels)
+        self.test_stat_scores.update(preds, labels)
+
+        self.log('test_acc', self.test_acc, on_step=False, on_epoch=True)
+        self.log('test_auc', self.test_auc, on_step=False, on_epoch=True)
+        self.log('test_f1', self.test_f1, on_step=False, on_epoch=True)
+        self.log('test_specificity', self.test_specificity, on_step=False, on_epoch=True)
+        self.log('test_sensitivity', self.test_sensitivity, on_step=False, on_epoch=True)
+        self.log('test_ppv', self.test_ppv, on_step=False, on_epoch=True)
+
+        stat_scores_output = self.test_stat_scores.compute()
+        tn = stat_scores_output[2]
+        fn = stat_scores_output[3]
+        npv = tn / (tn + fn + 1e-6)
+        self.log('test_npv', npv, on_step=False, on_epoch=True)
+
+        return {
+            'test_acc': self.test_acc.compute(), # Return computed value
+            'test_auc': self.test_auc.compute(),
+            'test_f1': self.test_f1.compute(),
+            'test_specificity': self.test_specificity.compute(),
+            'test_sensitivity': self.test_sensitivity.compute(),
+            'test_ppv': self.test_ppv.compute(),
+            'test_npv': npv
+        }
     
     def configure_optimizers(self):
         if not hasattr(self.config.training, 'optimizer_params'):

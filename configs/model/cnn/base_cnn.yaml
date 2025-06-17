@@ -1,15 +1,12 @@
-# @package _group_
-# Base configuration for all CNN models
-
+# Base configurations for all CNN models
 defaults:
   - ../base # Inherits from configs/model/base.yaml
-  # Add any CNN specific group defaults if you have them e.g.
-  # - cnn_block: res_block
 
 architecture: cnn
-freeze_backbone: false
-quality_aware: false # Example, can be overridden by specific CNNs
 
-# CNN-specific parameters
+# Common CNN parameters can be defined here.
+# These can be overridden by specific CNN model configs.
 # Example:
-# dropout_rate: 0.1
+# freeze_backbone: false
+# quality_aware: false
+# pool_type: "avg"

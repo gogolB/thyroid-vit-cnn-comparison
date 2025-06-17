@@ -34,24 +34,24 @@ class QualityAwarePreprocessor(nn.Module):
         # Load quality report if provided
         self.quality_indices = self._load_quality_indices(quality_report_path)
         
-        # Updated preprocessing parameters - more moderate
+        # Updated preprocessing parameters based on research recommendations
         self.params = {
             'extreme_dark': {
-                'gamma': 0.8,  # Increased from 0.6 for less aggressive brightening
-                'clahe_clip_limit': 2.0,  # Reduced from 3.0
-                'clahe_grid_size': (16, 16)  # Increased for smoother effect
+                'gamma': 0.8,
+                'clahe_clip_limit': 2.0,
+                'clahe_grid_size': (16, 16)
             },
             'low_contrast': {
-                'clahe_clip_limit': 1.5,  # Reduced from 2.0
-                'clahe_grid_size': (16, 16),  # Increased for smoother effect
-                'contrast_factor': 1.3  # Reduced from 1.5
+                'clahe_clip_limit': 0.03,  # Research recommendation: 0.01-0.05
+                'clahe_grid_size': (32, 32),  # Research recommendation: smaller tiles
+                'contrast_factor': 1.3
             },
             'artifacts': {
-                'percentile_clip': 99.9,  # Increased from 99.5 - less aggressive
-                'median_filter_size': 3,  # Reduced from 5
-                'bilateral_d': 5,  # Reduced from 9
-                'bilateral_sigma_color': 50,  # Reduced from 75
-                'bilateral_sigma_space': 50  # Reduced from 75
+                'percentile_clip': 99.9,
+                'median_filter_size': 3,
+                'bilateral_d': 5,
+                'bilateral_sigma_color': 50,
+                'bilateral_sigma_space': 50
             }
         }
     
@@ -340,7 +340,7 @@ class AdaptiveNormalization(nn.Module):
 
 
 def create_quality_aware_transform(
-    target_size: int = 256,
+    target_size: int = 224,
     quality_report_path: Optional[Path] = None,
     augmentation_level: str = 'medium',
     split: str = 'train'

@@ -1,14 +1,17 @@
-# @package _group_
 # Base training configuration - common settings for all models
 
-defaults:
-  - override /optimizer: adamw # Example default optimizer
+defaults: []
+  # - optimizer: adamw # Removed, optimizer_params are defined below
   # - override /scheduler: cosine # Example default scheduler (if you have scheduler configs)
 
 seed: 42
 epochs: 100
 batch_size: 32
 num_workers: 4
+
+loss:
+  _target_: torch.nn.CrossEntropyLoss
+  # label_smoothing: 0.0 # Optional
 
 # Optimizer settings (if not using a separate optimizer config group)
 optimizer_params:
@@ -33,4 +36,7 @@ log_every_n_steps: 50
 
 # Add other common parameters that might be shared across standard, vit_standard, swin_standard
 # For example, precision, gradient_clip_val, etc.
+gradient_clip_val: 0.5
+accumulate_grad_batches: 1
+deterministic: true
 # precision: 16 # if using mixed precision

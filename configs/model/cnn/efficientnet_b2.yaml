@@ -2,6 +2,7 @@ defaults:
   - base_cnn
 
 name: efficientnet_b2
+architecture: cnn
 _target_: src.models.cnn.efficientnet.EfficientNetB2
 
 # Model parameters

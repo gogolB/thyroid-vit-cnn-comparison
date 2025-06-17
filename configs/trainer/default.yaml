@@ -4,10 +4,10 @@
 # Hardware acceleration
 accelerator: auto
 devices: 1
-precision: 32  # Use 32-bit for MPS compatibility
+precision: "32-true"  # Changed to string, e.g., "32-true" or "32"
 
 # Training configuration
-max_epochs: ${training.num_epochs}
+max_epochs: ${training.epochs} # Corrected to training.epochs
 min_epochs: 1
 max_steps: -1
 min_steps: null
@@ -18,9 +18,8 @@ check_val_every_n_epoch: 1
 num_sanity_val_steps: 2
 
 # Gradient configuration
-gradient_clip_val: ${training.gradient_clip_val}
 gradient_clip_algorithm: norm
-accumulate_grad_batches: ${training.accumulate_grad_batches}
+accumulate_grad_batches: 1
 
 # Logging and checkpointing - UPDATED FOR SMALL DATASETS
 log_every_n_steps: 1  # Changed from 50 to 1 for small datasets
@@ -37,7 +36,7 @@ limit_test_batches: 1.0
 limit_predict_batches: 1.0
 
 # Reproducibility
-deterministic: ${training.deterministic}
+deterministic: true
 benchmark: false
 
 # Distributed training (disabled for single GPU/MPS)
@@ -51,3 +50,5 @@ detect_anomaly: false
 
 # Plugins
 plugins: null
+
+gradient_clip_val: 1.0

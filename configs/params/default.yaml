@@ -1,0 +1,4 @@
+# Default experiment parameters
+
+use_wandb: true # Default to using wandb, can be overridden
+# Add other general parameters here if needed

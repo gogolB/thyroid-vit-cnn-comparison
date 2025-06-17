@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Tuple, Optional, Union, Type # Added Type
 
 import numpy as np
 import hydra
+from hydra.core.hydra_config import HydraConfig # Import HydraConfig
 from omegaconf import DictConfig, OmegaConf, MISSING
 import pytorch_lightning as pl
 from pytorch_lightning.loggers import TensorBoardLogger, WandbLogger
@@ -45,7 +46,7 @@ class KFoldExperiment(BaseExperiment):
             config: The main experiment configuration, which should include kfold settings.
         """
         super().__init__(config)
-        if self.config.kfold is None:
+        if not hasattr(self.config, 'kfold') or self.config.kfold is None:
             raise ValueError("KFoldConfig is not provided in the experiment configuration.")
         self.kfold_config = self.config.kfold
         self.fold_results: List[Dict[str, Any]] = []
@@ -62,7 +63,8 @@ class KFoldExperiment(BaseExperiment):
         logger.info(f"Split file prefix: {self.kfold_config.split_file_prefix}")
 
         # Ensure output directory exists
-        Path(self.config.output_dir).mkdir(parents=True, exist_ok=True)
+        path = Path(self.config.output_dir) / f'{self.config.model.get("name", "unknown_model")}'
+        Path(path).mkdir(parents=True, exist_ok=True)
 
     def _get_lightning_module_class(self) -> Union[Type[ThyroidCNNModule], Type[ThyroidViTModule], Type[ThyroidDistillationModule]]:
         """Determines the LightningModule class based on configuration."""
@@ -99,7 +101,10 @@ class KFoldExperiment(BaseExperiment):
 
         # 1. Determine split file for the current fold
         split_file_name = f"{self.kfold_config.split_file_prefix}{fold_num}.json"
-        split_file_path = Path(self.kfold_config.split_dir) / split_file_name
+        # Use absolute path with original working directory
+        # Use project root directory instead of Hydra's original working directory
+        project_root = Path(__file__).resolve().parent.parent.parent
+        split_file_path = project_root / self.kfold_config.split_dir / split_file_name
 
         if not split_file_path.exists():
             logger.error(f"Split file not found for fold {fold_num}: {split_file_path}")
@@ -111,10 +116,15 @@ class KFoldExperiment(BaseExperiment):
         # We need to pass the specific split file to the DataModule or CARSThyroidDataset
         # Assuming DatasetConfig can accept a `split_file` parameter.
         # Create a mutable copy of the dataset config to override the split file for this fold.
-        fold_dataset_config_dict = OmegaConf.to_container(self.config.dataset, resolve=True) # self.config.dataset is Any (likely DictConfig)
+        # Handle both dictionary and OmegaConf types
+        if hasattr(self.config.dataset, '_is_omegaconf_config'):
+            fold_dataset_config_dict = OmegaConf.to_container(self.config.dataset, resolve=True)
+        else:
+            fold_dataset_config_dict = self.config.dataset
+            
         if not isinstance(fold_dataset_config_dict, dict):
-            logger.error(f"Dataset config from ExperimentConfig.dataset is not a dictionary after OmegaConf.to_container, got {type(fold_dataset_config_dict)}. Cannot set split_file.")
-            raise TypeError("Dataset config could not be converted to a dictionary.")
+            logger.error(f"Dataset config from ExperimentConfig.dataset is not a dictionary, got {type(fold_dataset_config_dict)}. Cannot set split_file.")
+            raise TypeError("Dataset config must be a dictionary.")
 
         fold_dataset_config_dict["split_file"] = str(split_file_path)
         # Add other k-fold specific fields from self.kfold_config if DatasetConfig expects them
@@ -126,7 +136,7 @@ class KFoldExperiment(BaseExperiment):
         # Create Pydantic model for type safety with ThyroidDataModule
         try:
             # Ensure fold_dataset_config_dict is Dict[str, Any]
-            validated_fold_dataset_dict: Dict[str, Any] = {k: v for k, v in fold_dataset_config_dict.items()}
+            validated_fold_dataset_dict: Dict[str, Any] = {str(k): v for k, v in fold_dataset_config_dict.items()}
             pydantic_fold_dataset_config = PydanticDatasetConfig(**validated_fold_dataset_dict)
         except Exception as e:
             logger.error(f"Failed to instantiate PydanticDatasetConfig for fold {fold_num}: {e}")
@@ -142,7 +152,7 @@ class KFoldExperiment(BaseExperiment):
             raise TypeError("Trainer config could not be converted to a dictionary.")
         
         # Ensure trainer_config_dict is Dict[str, Any]
-        validated_trainer_config_dict: Dict[str, Any] = {k: v for k, v in trainer_config_container.items()}
+        validated_trainer_config_dict: Dict[str, Any] = {str(k): v for k, v in trainer_config_container.items()}
         try:
             pydantic_training_config = PydanticTrainingConfig(**validated_trainer_config_dict)
         except Exception as e:
@@ -150,6 +160,16 @@ class KFoldExperiment(BaseExperiment):
             logger.error(f"Data used: {validated_trainer_config_dict}")
             raise
 
+        # self.config.training_content is an OmegaConf DictConfig from ExperimentConfig
+        # It contains batch_size, num_workers, epochs, loss, optimizer_params etc.
+        # Create a copy of training_content and add batch_size if missing
+        training_config_dict = OmegaConf.to_container(self.config.training_content, resolve=True)
+        if 'batch_size' not in training_config_dict:
+            training_config_dict['batch_size'] = self.config.training_content.get('batch_size', 32)
+        
+        # Convert back to Pydantic model for datamodule
+        pydantic_training_config = PydanticTrainingConfig(**training_config_dict)
+        
         data_module = ThyroidDataModule(
             dataset_config=pydantic_fold_dataset_config,
             training_config=pydantic_training_config
@@ -170,14 +190,16 @@ class KFoldExperiment(BaseExperiment):
         # self.config.model, self.config.trainer are DictConfig-like from ExperimentConfig
         # fold_dataset_config is a DictConfig created for the fold
         # Ensure these are converted to basic dicts for OmegaConf.create if they are not already.
-        model_cfg_dict = OmegaConf.to_container(self.config.model, resolve=True)
-        dataset_cfg_dict_for_lm = OmegaConf.to_container(pydantic_fold_dataset_config.model_dump(), resolve=True) # Use the pydantic model's dict
-        trainer_cfg_dict_for_lm = OmegaConf.to_container(pydantic_training_config.model_dump(), resolve=True) # Use the pydantic model's dict
+        model_cfg_dict = OmegaConf.to_container(self.config.model, resolve=True) # self.config.model is DictConfig
+        dataset_cfg_dict_for_lm = pydantic_fold_dataset_config.model_dump() # model_dump() returns a dict
+        # trainer_cfg_dict_for_lm is used for pl.Trainer, not for LightningModule's 'training' config section.
+        # The actual training content (loss, optimizer_params, etc.) is now in self.config.training_content
+        training_content_cfg_dict_for_lm = OmegaConf.to_container(self.config.training_content, resolve=True)
 
         lightning_module_cfg_parts = {
             "model": model_cfg_dict,
             "dataset": dataset_cfg_dict_for_lm,
-            "training": trainer_cfg_dict_for_lm, # This now contains optimizer_params, scheduler_params, loss from PydanticTrainingConfig
+            "training": training_content_cfg_dict_for_lm, # Use the actual training content
              # Access distillation and student_model directly from self.config (ExperimentConfig dataclass)
             "distillation": self.config.distillation, # This is Optional[Dict[str, Any]]
             "student_model": self.config.student_model, # This is Optional[Dict[str, Any]]
@@ -187,11 +209,48 @@ class KFoldExperiment(BaseExperiment):
         lightning_module_config = OmegaConf.create(filtered_lm_cfg_parts)
 
         LightningModuleClass = self._get_lightning_module_class()
-        lightning_module = LightningModuleClass(config=lightning_module_config)
+        
+        # Extract optimizer_params for ThyroidViTModule
+        # For ThyroidViTModule, extract optimizer_params from config
+        if LightningModuleClass == ThyroidViTModule:
+            optimizer_params = None
+            
+            # First try to get from training_content
+            if hasattr(self.config.training_content, 'optimizer_params') and self.config.training_content.optimizer_params is not None:
+                optimizer_params = self.config.training_content.optimizer_params
+                if isinstance(optimizer_params, DictConfig):
+                    optimizer_params = OmegaConf.to_container(optimizer_params, resolve=True)
+                logger.info("Using optimizer_params from training_content")
+            
+            # If not found, try the root config
+            if optimizer_params is None and hasattr(self.config, 'optimizer_params') and self.config.optimizer_params is not None:
+                optimizer_params = self.config.optimizer_params
+                if isinstance(optimizer_params, DictConfig):
+                    optimizer_params = OmegaConf.to_container(optimizer_params, resolve=True)
+                logger.info("Using optimizer_params from root config")
+            
+            # If still not found, try the lightning_module_config
+            if optimizer_params is None and hasattr(lightning_module_config, 'optimizer_params') and lightning_module_config.optimizer_params is not None:
+                optimizer_params = lightning_module_config.optimizer_params
+                if isinstance(optimizer_params, DictConfig):
+                    optimizer_params = OmegaConf.to_container(optimizer_params, resolve=True)
+                logger.info("Using optimizer_params from lightning_module_config")
+            
+            # Don't raise error if not found - ViT module will try to load from JSON
+            if optimizer_params is not None:
+                # Ensure optimizer_params is a dictionary
+                if not isinstance(optimizer_params, dict):
+                    logger.warning(f"optimizer_params is not a dictionary, converting to dict: {type(optimizer_params)}")
+                    optimizer_params = dict(optimizer_params)
+                logger.info(f"Using optimizer_params: {optimizer_params}")
+            
+            lightning_module = ThyroidViTModule(config=lightning_module_config, optimizer_params=optimizer_params)
+        else:
+            lightning_module = LightningModuleClass(config=lightning_module_config)
 
         # 5. Instantiate PyTorch Lightning Trainer
         # Configure logger for this specific fold
-        fold_log_dir = Path(self.config.output_dir) / f"fold_{fold_num}"
+        fold_log_dir = Path(self.config.output_dir) / f'{self.config.model.get("name", "unknown_model")}' /f"fold_{fold_num}"
         fold_log_dir.mkdir(parents=True, exist_ok=True)
 
         # Setup loggers (e.g., TensorBoard)
@@ -225,21 +284,29 @@ class KFoldExperiment(BaseExperiment):
         monitor_metric = trainer_params_for_pl.pop("monitor_metric", "val_loss")
         monitor_mode = trainer_params_for_pl.pop("monitor_mode", "min")
         early_stopping_patience = trainer_params_for_pl.pop("early_stopping_patience", None)
-        # save_top_k, save_last are for ModelCheckpoint
-        save_top_k = trainer_params_for_pl.pop("save_top_k", 1)
-        # save_last = trainer_params_for_pl.pop("save_last", True) # ModelCheckpoint handles this
+        # save_top_k is for ModelCheckpoint, pop it from trainer_params_for_pl if it was defined in trainer/default.yaml
+        # save_top_k is for ModelCheckpoint, should come from training_content config
+        save_top_k_from_training_content = OmegaConf.select(self.config.training_content, "save_top_k", default=1)
+        
+        # save_last for ModelCheckpoint should come from the training_content config
+        # self.config.training_content is an OmegaConf.DictConfig
+        save_last_from_training_content = OmegaConf.select(self.config.training_content, "save_last", default=True)
 
         trainer_params_for_pl["default_root_dir"] = str(fold_log_dir)
 
         # Instantiate callbacks
         callbacks_list_for_trainer: List[Callback] = []
+        # Create fold-specific checkpoint directory
+        fold_checkpoint_dir = os.path.join(self.config.output_dir, f'{self.config.model.get("name", "unknown_model")}', f"fold_{fold_num}")
+        os.makedirs(fold_checkpoint_dir, exist_ok=True)
+        
         checkpoint_callback = ModelCheckpoint(
-            dirpath=str(fold_log_dir / "checkpoints"),
+            dirpath=fold_checkpoint_dir,
             filename="{epoch}-{"+monitor_metric+":.2f}", # Use monitor_metric
             monitor=monitor_metric,
             mode=monitor_mode,
-            save_top_k=save_top_k,
-            # save_last=save_last # save_last is a ModelCheckpoint param
+            save_top_k=save_top_k_from_training_content,
+            save_last=save_last_from_training_content
         )
         callbacks_list_for_trainer.append(checkpoint_callback)
 
@@ -257,6 +324,7 @@ class KFoldExperiment(BaseExperiment):
         if not isinstance(trainer_params_for_pl, dict):
             raise TypeError(f"trainer_params_for_pl is not a dict, got {type(trainer_params_for_pl)}. Cannot unpack for pl.Trainer.")
 
+        print(f"Trainer parameters for fold {fold_num}: {trainer_params_for_pl}")
         trainer = pl.Trainer(
             logger=loggers_list,
             callbacks=callbacks_list_for_trainer,
@@ -354,8 +422,12 @@ class KFoldExperiment(BaseExperiment):
         Logs the aggregated results of the K-Fold experiment.
         """
         logger.info("Logging K-Fold experiment results...")
-        log_file_path = Path(self.config.output_dir) / "kfold_summary.json"
         try:
+            # Get the actual runtime output directory resolved by Hydra
+            runtime_output_dir = Path(HydraConfig.get().runtime.output_dir)
+            log_file_path = runtime_output_dir / "kfold_summary.json"
+            log_file_path.parent.mkdir(parents=True, exist_ok=True) # Ensure parent dir exists
+            
             with open(log_file_path, 'w') as f:
                 json.dump(self.aggregated_results, f, indent=4)
             logger.info(f"Aggregated K-Fold results saved to: {log_file_path}")

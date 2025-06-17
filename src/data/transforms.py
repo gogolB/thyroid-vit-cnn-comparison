@@ -21,6 +21,19 @@ from rich.table import Table
 console = Console()
 
 
+def anscombe_transform(x: np.ndarray) -> np.ndarray:
+    """
+    Apply Anscombe transform to stabilize Poisson noise.
+    Formula: f(x) = 2 * sqrt(x + 3/8)
+    
+    Args:
+        x: Input image array (uint16)
+        
+    Returns:
+        Transformed image (float32)
+    """
+    return 2 * np.sqrt(x.astype(np.float32) + 3/8)
+
 class MicroscopyNormalize(nn.Module):
     """
     Normalize microscopy images from uint16 range to standard range.

@@ -14,6 +14,7 @@ class ModelRegistry:
     """
     _registry = {} # Class variable to store registered models: {'type': {'name': class}}
 
+    _has_printed_warning = {}
     @classmethod
     def register(cls, names, model_type='default'):
         """
@@ -33,10 +34,12 @@ class ModelRegistry:
             
             for name in names:
                 if name in cls._registry[model_type]:
-                    logger.warning(
-                        f"Model {name} of type {model_type} is already registered. "
-                        f"Overwriting with {model_class.__name__}."
-                    )
+                    if name not in cls._has_printed_warning:
+                        #logger.warning(
+                        #    f"Model {name} of type {model_type} is already registered. "
+                        #    f"Overwriting with {model_class.__name__}."
+                        #)
+                        cls._has_printed_warning[name] = True
                 cls._registry[model_type][name] = model_class
                 logger.info(f"Registered model: {name} (Type: {model_type}) -> {model_class.__name__}")
             return model_class

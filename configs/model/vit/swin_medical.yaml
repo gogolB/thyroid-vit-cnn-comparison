@@ -2,7 +2,7 @@
 # Optimized window sizes and medical-specific features
 
 defaults:
-  - ../transformer/base_transformer
+  - transformer/base_transformer
   # - _self_
 
 name: swin_medical

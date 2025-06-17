@@ -1,0 +1,48 @@
+# configs/experiment/test_resnet18_kfold_quick.yaml
+# K-Fold experiment for resnet18 with 2 folds and 1 epoch for quick testing.
+
+defaults:
+  # - base_experiment_config_schema # Removed, structure is implicitly ExperimentConfig
+  # - kfold_config_schema           # Removed, as kfold section is defined directly below
+  # We need to specify where model, dataset, and trainer configs come from.
+  # These will be merged into the ExperimentConfig's model, dataset, trainer fields.
+  # Using '/' to indicate these are selections for the global config groups.
+  - /model: cnn/resnet18
+  - /dataset: default
+  - /trainer: default
+  - /training: cnn
+  - /augmentation: no_aug
+  - _self_                        # Allows this file to override values
+
+name: "resnet18_kfold2_quick_test"
+description: "A 2-fold cross-validation for resnet18, 1 epoch per fold for testing."
+architecture: cnn # Explicitly add architecture here
+
+# K-Fold specific settings
+kfold:
+  is_primary_kfold_experiment: true
+  num_folds: 2
+  # split_dir and split_file_prefix will use defaults from KFoldConfig schema if not overridden
+
+# Model settings (already loaded by 'override /model: resnet18')
+# model:
+#   name: resnet18 # This is implicitly set by the override
+#   # architecture: cnn # Should be in configs/model/resnet18.yaml
+
+# Dataset settings (already loaded by 'override /dataset: default')
+# dataset:
+#   # name: cars_thyroid_default # Implicitly set by override
+#   # ... other dataset params from configs/dataset/default.yaml
+
+# Trainer settings
+# configs/trainer/default.yaml is loaded by 'override /trainer: default'.
+# We override max_epochs here for the quick test.
+trainer:
+  max_epochs: 1 # Override for quick test
+  # Other trainer params like accelerator, devices, precision will come from configs/trainer/default.yaml
+
+# Ensure wandb is disabled for this quick test to avoid clutter
+params:
+  use_wandb: false # Overrides any wandb settings from base or other configs
+
+# No experiment_class_path needed as kfold.is_primary_kfold_experiment is true

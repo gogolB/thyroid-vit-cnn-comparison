@@ -1,6 +1,6 @@
 # configs/model/vit/deit_tiny.yaml
 defaults:
-  - ../transformer/base_transformer
+  - transformer/base_transformer # Corrected path
   # - _self_ # Uncomment if you need to reference other keys in this file
 
 name: deit_tiny
@@ -9,7 +9,7 @@ architecture: deit # Overrides base_transformer's 'transformer'
 
 # Model parameters
 params:
-  img_size: 256 # Overrides base_transformer's 224
+  img_size: 224 # Overrides base_transformer's 224
   # patch_size: 16 # Inherited from base_transformer
   in_chans: 1  # Grayscale thyroid images
   # num_classes: 2 # Inherited from base

@@ -1,6 +1,6 @@
-# @package _group_
-name: "cars_thyroid_default"
-data_path: "data/raw"  # As specified by the user
+# Default dataset configuration
+name: "cars_thyroid_default" # This will be dataset.name
+data_path: "data/processed"  # As specified by the user
 
 use_kfold: false
 split_dir: "data/splits" # Default directory for split files
@@ -8,7 +8,7 @@ fold: null
 val_split_ratio: 0.2
 test_split_ratio: null # Or 0.2 if a default test split is always desired
 
-img_size: 256
+img_size: 224
 channels: 1 # Assuming grayscale based on previous context
 mean: [0.5]
 std: [0.5]

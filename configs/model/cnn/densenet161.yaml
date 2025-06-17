@@ -1,0 +1,29 @@
+defaults:
+  - base_cnn
+
+name: densenet161
+architecture: cnn
+_target_: src.models.cnn.densenet.DenseNet161
+
+# Model parameters
+in_channels: 1  # Grayscale CARS images
+
+# DenseNet-specific parameters
+dropout_rate: 0.3  # DenseNet works well with moderate dropout
+use_attention: true  # Channel attention for medical imaging
+quality_aware: true  # Enable quality-aware features
+
+# Training parameters (optimized for DenseNet121)
+learning_rate: 0.0005  # Conservative LR for 7.0M parameters
+weight_decay: 0.0001  # Lower weight decay - DenseNet has built-in regularization
+
+# DenseNet benefits from these settings
+# Feature reuse makes it parameter-efficient
+# Dense connections help gradient flow
+
+# Memory note: DenseNet is memory-intensive during training
+# due to concatenation operations, but has fewer parameters
+# than ResNet50 (7.0M vs 25.6M)
+
+# Optional: reduce batch size if memory issues
+# batch_size: 24  # Uncomment if needed

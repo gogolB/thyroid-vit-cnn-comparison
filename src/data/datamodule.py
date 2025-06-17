@@ -2,9 +2,10 @@
 import pytorch_lightning as pl
 from torch.utils.data import DataLoader
 from typing import Optional
-
+from pathlib import Path
 from src.config.schemas import DatasetConfig, TrainingConfig
 from src.data.dataset import CARSThyroidDataset
+from src.data.quality_preprocessing import create_quality_aware_transform # Assuming this exists/will be created
 # from src.data.transforms import get_transforms # Assuming this exists/will be created
 
 # Placeholder for get_transforms if not available yet for initial implementation
@@ -61,9 +62,9 @@ class ThyroidDataModule(pl.LightningDataModule):
         # Assign train/val/test datasets for use in dataloaders
         
         # Setup transforms
-        self.train_transforms = get_transforms(self.dataset_config, mode='train')
-        self.val_transforms = get_transforms(self.dataset_config, mode='val')
-        self.test_transforms = get_transforms(self.dataset_config, mode='test')
+        self.train_transforms = create_quality_aware_transform(self.dataset_config.img_size, Path("reports/quality_report.json"), augmentation_level="medium", split="train")
+        self.val_transforms = create_quality_aware_transform(self.dataset_config.img_size, Path("reports/quality_report.json"), augmentation_level="none", split="val")
+        self.test_transforms = create_quality_aware_transform(self.dataset_config.img_size, Path("reports/quality_report.json"), augmentation_level="none", split="test")
 
         if stage == 'fit' or stage is None:
             self.train_dataset = CARSThyroidDataset(
@@ -112,11 +113,11 @@ class ThyroidDataModule(pl.LightningDataModule):
                 raise RuntimeError("Train dataset not setup. Call setup('fit') first or ensure trainer calls it.")
         return DataLoader(
             self.train_dataset,
-            batch_size=self.training_config.batch_size,
-            num_workers=self.training_config.num_workers,
+            batch_size=self.dataset_config.batch_size,
+            num_workers=self.dataset_config.num_workers,
             shuffle=True,
             pin_memory=True,
-            persistent_workers=True if self.training_config.num_workers > 0 else False
+            persistent_workers=True if self.dataset_config.num_workers > 0 else False
         )
 
     def val_dataloader(self):
@@ -127,11 +128,11 @@ class ThyroidDataModule(pl.LightningDataModule):
                 raise RuntimeError("Validation dataset not setup. Call setup('fit') first or ensure trainer calls it.")
         return DataLoader(
             self.val_dataset,
-            batch_size=self.training_config.batch_size,
-            num_workers=self.training_config.num_workers,
+            batch_size=self.dataset_config.batch_size,
+            num_workers=self.dataset_config.num_workers,
             shuffle=False,
             pin_memory=True,
-            persistent_workers=True if self.training_config.num_workers > 0 else False
+            persistent_workers=True if self.dataset_config.num_workers > 0 else False
         )
 
     def test_dataloader(self):
@@ -146,11 +147,11 @@ class ThyroidDataModule(pl.LightningDataModule):
         
         return DataLoader(
             self.test_dataset,
-            batch_size=self.training_config.batch_size,
-            num_workers=self.training_config.num_workers,
+            batch_size=self.dataset_config.batch_size,
+            num_workers=self.dataset_config.num_workers,
             shuffle=False,
             pin_memory=True,
-            persistent_workers=True if self.training_config.num_workers > 0 else False
+            persistent_workers=True if self.dataset_config.num_workers > 0 else False
         )
 
     def predict_dataloader(self):
@@ -162,9 +163,9 @@ class ThyroidDataModule(pl.LightningDataModule):
                 return None
         return DataLoader(
             self.predict_dataset,
-            batch_size=self.training_config.batch_size,
-            num_workers=self.training_config.num_workers,
+            batch_size=self.dataset_config.batch_size,
+            num_workers=self.dataset_config.num_workers,
             shuffle=False,
             pin_memory=True,
-            persistent_workers=True if self.training_config.num_workers > 0 else False
+            persistent_workers=True if self.dataset_config.num_workers > 0 else False
         )

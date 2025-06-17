@@ -2,7 +2,7 @@
 # ~28M parameters, designed for efficient training on small medical datasets
 
 defaults:
-  - ../transformer/base_transformer
+  - transformer/base_transformer
   # - _self_
 
 name: swin_tiny

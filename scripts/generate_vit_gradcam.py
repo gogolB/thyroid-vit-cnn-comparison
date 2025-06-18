@@ -1,9 +1,9 @@
 """
-Definitive Grad-CAM Visualization Script for DenseNet Models.
+Definitive Grad-CAM Visualization Script for Vision Transformer Models.
 
 This script is specifically tailored to generate high-quality, publication-ready
-Grad-CAM heatmaps for DenseNet architectures, now enhanced with contour lines
-for improved scientific clarity.
+Grad-CAM heatmaps for ViT, DeiT, and Swin architectures, now enhanced with
+contour lines for improved scientific clarity.
 """
 
 import sys
@@ -19,6 +19,8 @@ import cv2
 from rich.console import Console
 import warnings
 import timm
+from timm.models.swin_transformer import SwinTransformerBlock
+from timm.models.vision_transformer import Block as ViTBlock
 
 warnings.filterwarnings('ignore')
 console = Console()
@@ -37,8 +39,8 @@ def enhance_contrast(image: np.ndarray) -> np.ndarray:
     return enhanced
 
 
-class DenseNetGradCAM:
-    """Robust Grad-CAM specifically for DenseNet architectures."""
+class ViTGradCAM:
+    """Robust Grad-CAM for Vision Transformer architectures (ViT, DeiT, Swin)."""
     def __init__(self, model: nn.Module):
         self.model = model
         self.gradients = None
@@ -47,14 +49,19 @@ class DenseNetGradCAM:
         self._find_and_register_hook()
 
     def _find_and_register_hook(self):
-        """Finds the final feature-producing layer in a DenseNet model."""
-        target_layer = self.model.features.norm5
+        """Finds the final transformer block and hooks its final normalization layer."""
+        target_layer = None
+        for module in reversed(list(self.model.modules())):
+            if isinstance(module, (SwinTransformerBlock, ViTBlock)):
+                target_layer = module.norm2 if hasattr(module, 'norm2') else module.norm1
+                break
+        
         if target_layer:
             self.handles.append(target_layer.register_forward_hook(self._save_activation))
             self.handles.append(target_layer.register_full_backward_hook(self._save_gradient))
-            console.print(f"[green]✓ Registered Grad-CAM hook on DenseNet's final feature layer (features.norm5).[/green]")
+            console.print(f"[green]✓ Registered Grad-CAM hook on the final transformer block's norm layer.[/green]")
         else:
-            raise ValueError("Could not find target layer 'features.norm5' in the DenseNet model.")
+            raise ValueError("Could not find a ViT/Swin block in the model.")
 
     def _save_activation(self, module, input, output):
         self.activations = output.detach()
@@ -63,7 +70,7 @@ class DenseNetGradCAM:
         self.gradients = grad_output[0].detach()
 
     def generate_heatmap(self, input_tensor: torch.Tensor, class_idx: Optional[int] = None) -> np.ndarray:
-        """Generates the class activation heatmap."""
+        """Generates the class activation heatmap, handling the [CLS] token."""
         self.model.eval()
         input_tensor.requires_grad = True
         output = self.model(input_tensor)
@@ -78,19 +85,29 @@ class DenseNetGradCAM:
         if self.gradients is None or self.activations is None:
             raise RuntimeError("Failed to get gradients or activations for Grad-CAM.")
 
+        pooled_gradients = torch.mean(self.gradients, dim=[0, 1])
         activations = self.activations.squeeze(0)
-        pooled_gradients = torch.mean(self.gradients.squeeze(0), dim=[1, 2])
 
-        for i in range(activations.shape[0]):
-            activations[i, :, :] *= pooled_gradients[i]
+        L, C = activations.shape
+        H = W = int(np.sqrt(L))
+        if H * W != L:
+            H = W = int(np.sqrt(L - 1))
+            if H * W == L - 1:
+                console.print("[dim]CLS token detected. Removing for spatial mapping.[/dim]")
+                activations = activations[1:]
+            else:
+                raise ValueError(f"Feature map length {L} cannot be reshaped into a square or (square+1).")
 
-        heatmap = torch.mean(activations, dim=0).squeeze()
+        for i in range(C):
+            activations[:, i] *= pooled_gradients[i]
+
+        heatmap = torch.mean(activations, dim=1).squeeze()
         heatmap = F.relu(heatmap)
         
         if torch.max(heatmap) > 0:
             heatmap /= torch.max(heatmap)
         
-        return heatmap.cpu().numpy()
+        return heatmap.cpu().numpy().reshape(H, W)
 
     def remove_hooks(self):
         for handle in self.handles:
@@ -130,7 +147,7 @@ def visualize_final_heatmap(
     axes[0].axis('off')
 
     console.print("  Generating Grad-CAM Heatmap...")
-    grad_cam = DenseNetGradCAM(model)
+    grad_cam = ViTGradCAM(model)
     heatmap = grad_cam.generate_heatmap(input_tensor.to(device), class_idx=predicted_class)
     grad_cam.remove_hooks()
     
@@ -149,7 +166,7 @@ def visualize_final_heatmap(
 
     result_symbol = "✓" if is_correct else "✗"
     super_title = (
-        f"DenseNet Analysis: {model_name} | Actual: {actual_name}\n"
+        f"ViT/Swin Analysis: {model_name} | Actual: {actual_name}\n"
         f"Predicted: {predicted_name} ({confidence:.1%}) | Result: {result_symbol}"
     )
     fig.suptitle(super_title, fontsize=16, weight='bold')
@@ -162,7 +179,7 @@ def visualize_final_heatmap(
         plt.show()
 
 
-def load_densenet_model(model_name: str, checkpoint_path: str, device: str = 'cpu') -> Optional[nn.Module]:
+def load_vit_model(model_name: str, checkpoint_path: str, device: str = 'cpu') -> Optional[nn.Module]:
     try:
         checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
         model = timm.create_model(model_name, pretrained=False, num_classes=2, in_chans=1)
@@ -178,13 +195,13 @@ def load_densenet_model(model_name: str, checkpoint_path: str, device: str = 'cp
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Generate Grad-CAM visualizations for DenseNet models.")
-    parser.add_argument('--model-name', type=str, default='densenet169', help="The specific DenseNet model to visualize.")
+    parser = argparse.ArgumentParser(description="Generate Grad-CAM visualizations for ViT/Swin models.")
+    parser.add_argument('--model-name', type=str, default='swin_tiny', help="The specific ViT/Swin model to visualize.")
     parser.add_argument('--checkpoint', type=str, required=True, help="Path to the trained model checkpoint file (.ckpt).")
     args = parser.parse_args()
     
     checkpoint_path = Path(args.checkpoint)
-    output_dir = Path("outputs/densenet_gradcam")
+    output_dir = Path("outputs/vit_gradcam")
     output_dir.mkdir(parents=True, exist_ok=True)
     data_dir = Path("data/raw")
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -193,7 +210,7 @@ def main():
         console.print(f"[red]Error: Checkpoint file not found at {checkpoint_path}[/red]")
         return
 
-    model = load_densenet_model(args.model_name, str(checkpoint_path), device=device)
+    model = load_vit_model(args.model_name, str(checkpoint_path), device=device)
     if model is None: return
 
     console.print("[cyan]Loading dataset for 'test' split...[/cyan]")
@@ -223,7 +240,7 @@ def main():
         save_path = output_dir / f"{args.model_name}_sample_{i+1}_{label_str}.png"
         visualize_final_heatmap(model=model, model_name=args.model_name, original_image=raw_img, input_tensor=tensor, actual_label=label, save_path=save_path, device=device)
 
-    console.print("\n[bold green]✓ DenseNet Grad-CAM Visualization Complete![/bold green]")
+    console.print("\n[bold green]✓ ViT/Swin Grad-CAM Visualization Complete![/bold green]")
     console.print(f"   Outputs saved to: {output_dir}")
 
 if __name__ == "__main__":

@@ -83,3 +83,7 @@ Thumbs.db
 .cache/
 
 .coverage
+.roo/
+checkpoints/
+results/
+reports/

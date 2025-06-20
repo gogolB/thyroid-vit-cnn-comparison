@@ -120,7 +120,7 @@ def process_single_image(img_path: Path) -> np.ndarray:
 
 def main():
     parser = argparse.ArgumentParser(description='CARS Thyroid Image Preprocessing Pipeline')
-    parser.add_argument('--input', type=str, default='data/raw', 
+    parser.add_argument('--input', type=str, default='data/raw2', 
                         help='Path to raw data directory')
     parser.add_argument('--output', type=str, default='data/processed', 
                         help='Path to processed data directory')

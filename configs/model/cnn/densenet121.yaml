@@ -1,12 +1,12 @@
+defaults:
+  - base_cnn
+
 name: densenet121
-architecture: cnn
+architecture: cnn # Explicitly add architecture
 _target_: src.models.cnn.densenet.DenseNet121
 
 # Model parameters
-num_classes: ${dataset.num_classes}
 in_channels: 1  # Grayscale CARS images
-pretrained: true
-freeze_backbone: false
 
 # DenseNet-specific parameters
 dropout_rate: 0.3  # DenseNet works well with moderate dropout

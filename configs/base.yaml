@@ -1,0 +1,28 @@
+# Project-wide defaults
+# Hydra specific settings
+hydra:
+  run:
+    dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  sweep:
+    dir: multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    subdir: ${hydra.job.num}
+
+# Default paths (placeholders, to be customized)
+paths:
+  data_dir: "data/"
+  output_dir: "outputs/"
+  log_dir: "logs/"
+  checkpoint_dir: "checkpoints/"
+
+# Experiment settings
+project_name: "thyroid-vit-cnn-comparison"
+experiment_name: "default_experiment"
+
+# Default dataset, model, training groups
+defaults:
+  - dataset: default
+  - model: ??? # To be specified by specific experiment configs
+  - training: base 
+  - override hydra/job_logging: colorlog # Example logging
+  - override hydra/hydra_logging: colorlog # Example logging
+  - _self_ # Allows referencing keys within this config

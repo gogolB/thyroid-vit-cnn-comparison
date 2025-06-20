@@ -326,8 +326,14 @@ def main():
         cancer_indices = [i for i in all_indices_in_split if dataset.labels[dataset.indices[i]] == 1]
         
         sample_indices_to_process = []
-        if normal_indices: sample_indices_to_process.append(normal_indices[0])
-        if cancer_indices: sample_indices_to_process.append(cancer_indices[0])
+        #if normal_indices: sample_indices_to_process.append(normal_indices)
+        if normal_indices: 
+            for i in normal_indices:
+                sample_indices_to_process.append(i)
+        #if cancer_indices: sample_indices_to_process.append(cancer_indices[0])
+        if cancer_indices:
+            for i in cancer_indices:
+                sample_indices_to_process.append(i)
 
         if not sample_indices_to_process: raise FileNotFoundError("Could not find representative samples in test split.")
         

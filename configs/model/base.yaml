@@ -1,0 +1,9 @@
+# Base model configuration - common settings for all models
+name: ??? # To be overridden by specific model configs (e.g., resnet50, vit_base)
+num_classes: 2 # Example, adjust if different
+# architecture: ??? # This should be set by model-type specific bases (e.g., base_cnn.yaml)
+pretrained: true
+
+# Other common model parameters can go here
+# Example:
+# global_pool: 'avg'

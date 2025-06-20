@@ -1,12 +1,12 @@
+defaults:
+  - base_cnn
+
 name: resnet101
 architecture: cnn
 _target_: src.models.cnn.resnet.ResNet101
 
 # Model parameters
-num_classes: ${dataset.num_classes}
 in_channels: 1  # Grayscale CARS images
-pretrained: true
-freeze_backbone: false
 
 # Architecture-specific parameters
 dropout_rate: 0.35  # Highest dropout for deepest model

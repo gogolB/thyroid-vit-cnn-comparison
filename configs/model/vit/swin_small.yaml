@@ -1,15 +1,19 @@
 # Swin-Small configuration
 # ~50M parameters, balanced performance for medical imaging
 
+defaults:
+  - transformer/base_transformer
+  # - _self_
+
 name: swin_small
 type: swin
-architecture: vit
+# architecture: vit # Inherited from base_transformer as 'transformer'
 params:
   # Architecture parameters
-  img_size: 256
-  patch_size: 4
+  img_size: 224 # Overrides base_transformer's 224
+  patch_size: 4 # Overrides base_transformer's 16
   in_chans: 1  # Grayscale medical images
-  num_classes: 2
+  # num_classes: 2 # Inherited from base
   embed_dim: 96
   depths: [2, 2, 18, 2]  # Deeper than tiny
   num_heads: [3, 6, 12, 24]
@@ -33,7 +37,7 @@ params:
   quality_dim: 4
   
 # Pretrained weights configuration
-pretrained: true
+# pretrained: true # Inherited from base
 pretrained_cfg:
   url: "microsoft/swin_small_patch4_window7_224"
   num_classes: 1000

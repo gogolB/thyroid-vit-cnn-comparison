@@ -1,0 +1,12 @@
+# Base configurations for all CNN models
+defaults:
+  - ../base # Inherits from configs/model/base.yaml
+
+architecture: cnn
+
+# Common CNN parameters can be defined here.
+# These can be overridden by specific CNN model configs.
+# Example:
+# freeze_backbone: false
+# quality_aware: false
+# pool_type: "avg"

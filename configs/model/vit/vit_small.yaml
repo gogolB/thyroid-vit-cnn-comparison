@@ -1,15 +1,19 @@
 
 # configs/model/vit/vit_small.yaml
+defaults:
+  - transformer/base_transformer
+  # - _self_
+
 name: vit_small
 type: vision_transformer
-architecture: vit
+# architecture: vit # Inherited from base_transformer as 'transformer'
 
 # Model parameters
 params:
-  img_size: 256
-  patch_size: 16
+  img_size: 224 # Overrides base_transformer's 224
+  # patch_size: 16 # Inherited from base_transformer
   in_chans: 1  # Grayscale
-  num_classes: 2
+  # num_classes: 2 # Inherited from base
   embed_dim: 384  # Small dimension
   depth: 12
   num_heads: 6
@@ -24,7 +28,7 @@ params:
   pool_type: cls
   
 # No pretrained weights for standard ViT
-pretrained: false
+# pretrained: false # Overrides base.yaml's true, and base_transformer inherits from base.
 
 # Model initialization
 init:

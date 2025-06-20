@@ -30,7 +30,7 @@ class TestPatchEmbed:
         images, _ = synthetic_batch
         
         patch_embed = PatchEmbed(
-            img_size=256,
+            img_size=224, # Match synthetic_batch
             patch_size=16,
             in_chans=1,
             embed_dim=768,
@@ -39,15 +39,15 @@ class TestPatchEmbed:
         
         patches, quality_scores = patch_embed(images)
         
-        assert patches.shape == (4, 256, 768)  # (batch, num_patches, embed_dim)
-        assert quality_scores is None or quality_scores.shape == (4, 256)
+        assert patches.shape == (4, 196, 768)  # (batch, num_patches for 224x224, embed_dim)
+        assert quality_scores is None or quality_scores.shape == (4, 196) # num_patches for 224x224
     
     def test_linear_projection(self, synthetic_batch):
         """Test Linear projection"""
         images, _ = synthetic_batch
         
         patch_embed = PatchEmbed(
-            img_size=256,
+            img_size=224, # Match synthetic_batch
             patch_size=16,
             in_chans=1,
             embed_dim=768,
@@ -56,14 +56,14 @@ class TestPatchEmbed:
         
         patches, quality_scores = patch_embed(images)
         
-        assert patches.shape == (4, 256, 768)
+        assert patches.shape == (4, 196, 768) # num_patches for 224x224
     
     def test_quality_aware_scoring(self, synthetic_batch):
         """Test quality-aware patch scoring"""
         images, _ = synthetic_batch
         
         patch_embed = PatchEmbed(
-            img_size=256,
+            img_size=224, # Match synthetic_batch
             patch_size=16,
             in_chans=1,
             embed_dim=768,
@@ -73,7 +73,7 @@ class TestPatchEmbed:
         patches, quality_scores = patch_embed(images)
         
         assert quality_scores is not None
-        assert quality_scores.shape == (4, 256)
+        assert quality_scores.shape == (4, 196) # num_patches for 224x224
         assert torch.all(quality_scores >= 0) and torch.all(quality_scores <= 1)
     
     def test_different_patch_sizes(self):
@@ -193,7 +193,7 @@ class TestVisionTransformerBase:
                 ])
         
         default_kwargs = {
-            'img_size': 256,
+            'img_size': 224, # Changed to match synthetic_batch
             'patch_size': 16,
             'in_chans': 1,
             'num_classes': 2,
@@ -342,9 +342,9 @@ class TestIntegration:
     @pytest.mark.parametrize("batch_size", [1, 2, 8, 16])
     def test_batch_sizes(self, batch_size):
         """Test with different batch sizes"""
-        model = TestVisionTransformerBase().create_simple_vit()
+        model = TestVisionTransformerBase().create_simple_vit() # This now defaults to img_size=224
         
-        x = torch.randn(batch_size, 1, 256, 256)
+        x = torch.randn(batch_size, 1, 224, 224) # Match model's img_size
         output = model(x)
         assert output.shape == (batch_size, 2)
 

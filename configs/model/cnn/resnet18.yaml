@@ -1,12 +1,17 @@
-name: resnet18
+# defaults:
+#   - cnn_base_defaults # Removed
+
+# Inlined content from cnn_base_defaults.yaml:
 architecture: cnn
+name: resnet18 # Overrides '???'
+freeze_backbone: false
+# quality_aware: false # This line (from inlined base) is removed to avoid duplication. The specific value below will be used.
+
+# Original resnet18 content:
 _target_: src.models.cnn.resnet.ResNet18
 
 # Model parameters
-num_classes: ${dataset.num_classes}
 in_channels: 1  # Grayscale CARS images
-pretrained: true
-freeze_backbone: false
 
 # Architecture-specific parameters
 dropout_rate: 0.2
@@ -17,7 +22,7 @@ learning_rate: 0.001
 weight_decay: 0.01
 
 # Quality-aware preprocessing
-quality_aware: true
+quality_aware: true # Overrides 'false' from inlined base
 
 # Feature extraction
 use_attention: false

@@ -1,0 +1,84 @@
+defaults:
+  - model: vit/deit_tiny
+  - dataset: default
+  - training: distillation
+
+name: densenet169_distill_deit_tiny_kfold
+description: "K-Fold distillation of DeiT-Tiny from DenseNet169 teachers."
+
+kfold:
+  is_primary_kfold_experiment: true
+  num_folds: 7
+  experiment_name_prefix: "distilled_deit_tiny_from_densenet169"
+
+student_model:
+  name: deit_tiny
+  params:
+    distilled: true
+    pretrained: true
+
+distillation:
+  enabled: true
+  teacher_model_type: cnn
+  teacher_model_name: densenet169
+  teacher_checkpoint: "checkpoints/densenet169/fold_1/last.ckpt"  # Placeholder, will be updated per fold
+  alpha: 0.7
+  temperature: 3.0
+  distillation_type: soft
+  freeze_teacher: true
+
+training:
+  _target_: src.training.lightning_modules.ThyroidDistillationModule
+
+trainer:
+  # Hardware acceleration
+  accelerator: auto
+  devices: 1
+  precision: "32-true"  # Changed to string, e.g., "32-true" or "32"
+
+  # Training configuration
+  max_epochs: 150 # Corrected to training.epochs
+  min_epochs: 1
+  max_steps: -1
+  min_steps: null
+
+  # Validation configuration
+  val_check_interval: 1.0
+  check_val_every_n_epoch: 1
+  num_sanity_val_steps: 2
+
+  # Gradient configuration
+  gradient_clip_algorithm: norm
+  accumulate_grad_batches: 1
+
+  # Logging and checkpointing - UPDATED FOR SMALL DATASETS
+  log_every_n_steps: 1  # Changed from 50 to 1 for small datasets
+  enable_checkpointing: true
+  enable_progress_bar: true
+  enable_model_summary: true
+
+  # Development/debugging
+  fast_dev_run: false
+  overfit_batches: 0.0
+  limit_train_batches: 1.0
+  limit_val_batches: 1.0
+  limit_test_batches: 1.0
+  limit_predict_batches: 1.0
+
+  # Reproducibility
+  deterministic: true
+  benchmark: false
+
+  # Distributed training (disabled for single GPU/MPS)
+  strategy: auto
+  num_nodes: 1
+  sync_batchnorm: false
+
+  # Profiling
+  profiler: null
+  detect_anomaly: false
+
+  # Plugins
+  plugins: null
+
+  gradient_clip_val: 1.0

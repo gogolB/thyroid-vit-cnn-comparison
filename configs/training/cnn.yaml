@@ -1,0 +1,11 @@
+# Training configuration specific to CNN models
+
+defaults:
+  - base # Inherits from base.yaml
+  # Potentially override or add CNN-specific optimizer/scheduler defaults here
+  # - override /optimizer: sgd 
+  # - override /scheduler: step_lr
+
+# CNN-specific training parameters can be added here
+# For example:
+# cnn_specific_param: value

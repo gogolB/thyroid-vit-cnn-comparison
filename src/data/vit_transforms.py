@@ -436,7 +436,8 @@ class CutMix:
         bbx1, bby1, bbx2, bby2 = self._rand_bbox(images.shape, lam)
         
         # Apply CutMix
-        images[:, :, bbx1:bbx2, bby1:bby2] = images[index, :, bbx1:bbx2, bby1:bby2]
+        # Corrected indexing: bby1:bby2 for height (dim 2), bbx1:bbx2 for width (dim 3)
+        images[:, :, bby1:bby2, bbx1:bbx2] = images[index, :, bby1:bby2, bbx1:bbx2]
         
         # Adjust lambda based on actual box area
         lam = 1 - ((bbx2 - bbx1) * (bby2 - bby1) / (images.shape[-1] * images.shape[-2]))

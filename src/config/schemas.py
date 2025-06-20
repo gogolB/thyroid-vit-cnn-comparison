@@ -134,7 +134,7 @@ class DatasetConfig(BaseModel):
     num_workers: int = 4 # Already in TrainingConfig
 
     # Image/Transform parameters (can be nested in a TransformConfig)
-    img_size: int = 256 # Default based on sample_batch in conftest.py
+    img_size: int = 224 # Default based on sample_batch in conftest.py
     # For CARS dataset, it's likely grayscale.
     channels: int = 1 # 1 for grayscale, 3 for RGB
     mean: List[float] = Field(default_factory=lambda: [0.5]) # Default for 1 channel

@@ -6,6 +6,7 @@ Grad-CAM heatmaps for DenseNet architectures, now enhanced with contour lines
 for improved scientific clarity.
 """
 
+from random import sample
 import sys
 import argparse
 from pathlib import Path
@@ -19,6 +20,12 @@ import cv2
 from rich.console import Console
 import warnings
 import timm
+
+# Add project root to path
+sys.path.append(str(Path(__file__).parent.parent))
+
+from src.config.schemas import DatasetConfig
+
 
 warnings.filterwarnings('ignore')
 console = Console()
@@ -48,7 +55,7 @@ class DenseNetGradCAM:
 
     def _find_and_register_hook(self):
         """Finds the final feature-producing layer in a DenseNet model."""
-        target_layer = self.model.features.norm5
+        target_layer = self.model.model.features.norm5
         if target_layer:
             self.handles.append(target_layer.register_forward_hook(self._save_activation))
             self.handles.append(target_layer.register_full_backward_hook(self._save_gradient))
@@ -112,14 +119,21 @@ def visualize_final_heatmap(
     model.eval()
     with torch.no_grad():
         output = model(input_tensor.to(device))
+        console.print(f"[cyan]Model output: {output}[/cyan]")
         probabilities = torch.softmax(output, dim=1)
+        console.print(f"[cyan]Model output probabilities: {probabilities}[/cyan]")
         predicted_class = output.argmax(dim=1).item()
+        console.print(f"[green]Predicted class: {predicted_class}[/green]")
         confidence = probabilities[0, predicted_class].item()
 
     class_names = {0: 'Normal', 1: 'Cancerous'}
-    actual_name = class_names[actual_label]
+    if isinstance(actual_label, torch.Tensor):
+        actual_name = class_names[actual_label.item()]
+    else:
+        actual_name = class_names[actual_label]
     predicted_name = class_names[predicted_class]
     is_correct = actual_label == predicted_class
+    console.print(f"[bold blue]Actual: {actual_name} | Predicted: {predicted_name} | Confidence: {confidence:.1%}[/bold blue]")
 
     plt.style.use('default')
     fig, axes = plt.subplots(1, 2, figsize=(10, 5), constrained_layout=True)
@@ -164,16 +178,38 @@ def visualize_final_heatmap(
 
 def load_densenet_model(model_name: str, checkpoint_path: str, device: str = 'cpu') -> Optional[nn.Module]:
     try:
-        checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
-        model = timm.create_model(model_name, pretrained=False, num_classes=2, in_chans=1)
-        state_dict = checkpoint.get('state_dict', checkpoint)
-        state_dict = {k.replace('model.', ''): v for k, v in state_dict.items()}
-        model.load_state_dict(state_dict, strict=False)
-        console.print(f"[green]✓ Loaded {model_name} successfully from {Path(checkpoint_path).name}[/green]")
+        from src.models.cnn.densenet import DenseNet  # Ensure correct import path
+        checkpoint = torch.load(
+            checkpoint_path, map_location=device, weights_only=False
+        )
+        
+        cfg = {
+            'name': "densenet161",
+        }
+        from omegaconf import OmegaConf
+        cfg = OmegaConf.create(cfg)
+        model = DenseNet(config=cfg)
+        
+        # save the original state_dict keys
+        with open("test.txt", 'w') as f:
+            f.writelines("\n".join(list(checkpoint['state_dict'].keys())))
+            
+        with open ("test2.txt", 'w') as f:
+            f.writelines("\n".join(list(model.state_dict().keys())))
+
+        for key in list(checkpoint['state_dict'].keys()):
+            if key.startswith('model.model.'):
+                new_key = key.replace('model.model.', 'model.')
+                checkpoint['state_dict'][new_key] = checkpoint['state_dict'].pop(key)
+        
+        model.load_state_dict(checkpoint['state_dict'], strict=True)
+        console.print(f"[green]✓ Loaded DenseNet model {model_name} from checkpoint: {checkpoint_path}[/green]")
         model.eval()
         return model.to(device)
     except Exception as e:
         console.print(f"[red]Error loading model {model_name}: {e}[/red]")
+        import traceback
+        console.print(traceback.format_exc())
         return None
 
 
@@ -201,16 +237,30 @@ def main():
         from src.data.dataset import CARSThyroidDataset
         from src.data.quality_preprocessing import create_quality_aware_transform
         transform = create_quality_aware_transform(target_size=224, split='test')
-        dataset = CARSThyroidDataset(root_dir=data_dir, split='test', transform=transform, target_size=224, normalize=False)
-        raw_dataset = CARSThyroidDataset(root_dir=data_dir, split='test', transform=None, target_size=224, normalize=False)
+        dataset_config = DatasetConfig(
+            data_path='data/processed',
+            split='test',
+            transform=transform,
+            target_size=224,
+            normalize=False
+        )
+        dataset = CARSThyroidDataset(config=dataset_config)
+        raw_dataset = CARSThyroidDataset(config=dataset_config)
         if len(dataset) == 0: raise ValueError("Test dataset is empty.")
         all_indices_in_split = list(range(len(dataset)))
         normal_indices = [i for i in all_indices_in_split if dataset.labels[dataset.indices[i]] == 0]
         cancer_indices = [i for i in all_indices_in_split if dataset.labels[dataset.indices[i]] == 1]
         sample_indices_to_process = []
-        if normal_indices: sample_indices_to_process.append(normal_indices[0])
-        if cancer_indices: sample_indices_to_process.append(cancer_indices[0])
-        if not sample_indices_to_process: raise FileNotFoundError("Could not find representative samples in test split.")
+        
+        if normal_indices: 
+            for i in range(0, len(normal_indices)):
+                sample_indices_to_process.append(normal_indices[i])
+        if cancer_indices: 
+            for i in range(0, len(cancer_indices)):
+                sample_indices_to_process.append(cancer_indices[i])
+        
+        if not sample_indices_to_process: 
+            raise FileNotFoundError("Could not find representative samples in test split.")
         samples = [(raw_dataset[i][0], dataset[i][0].unsqueeze(0), dataset[i][1]) for i in sample_indices_to_process]
         console.print(f"[green]✓ Found {len(samples)} samples to process.[/green]")
     except Exception as e:

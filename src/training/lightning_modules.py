@@ -745,7 +745,7 @@ class ThyroidDistillationModule(pl.LightningModule):
     Trains a student model (typically DeiT) using knowledge from a pre-trained teacher.
     """
     
-    def __init__(self, config: DictConfig):
+    def __init__(self, config: DictConfig, trainer: Optional[pl.Trainer] = None):
         """
         Initialize the distillation module.
         
@@ -755,7 +755,8 @@ class ThyroidDistillationModule(pl.LightningModule):
         super().__init__()
         self.config = config
         self.save_hyperparameters()
-        
+        self.trainer = trainer
+
         # Verify distillation is enabled
         if not config.distillation.get('enabled', False):
             raise ValueError("Distillation must be enabled in config")
@@ -805,20 +806,24 @@ class ThyroidDistillationModule(pl.LightningModule):
     
     def _create_student_model(self) -> nn.Module:
         """Create the student model using ModelRegistry."""
-        if not hasattr(self, 'config') or not hasattr(self.config, 'student_model') or self.config.student_model is None:
-            raise AttributeError("ThyroidDistillationModule requires 'self.config' with a 'student_model' attribute (DictConfig) for ModelRegistry.")
-        
-        student_model_config = self.config.student_model
+        if hasattr(self.config, 'student_model') and self.config.student_model is not None:
+            student_model_config = self.config.student_model
+            print(f"Student model config source: cfg.student_model")
+        elif hasattr(self.config, 'model') and self.config.model is not None: # Fallback to cfg.model
+            student_model_config = self.config.model
+            print(f"Student model config source: cfg.model (fallback)")
+        else:
+            raise AttributeError("Student model configuration not found in cfg.student_model or cfg.model")
         
         model = ModelRegistry.create_model(student_model_config)
         
         param_count = sum(p.numel() for p in model.parameters())
         trainable_count = sum(p.numel() for p in model.parameters() if p.requires_grad)
         
-        self.log_dict({
-            'model/student_parameters': float(param_count),
-            'model/student_trainable': float(trainable_count),
-        }, on_epoch=False, on_step=False)
+        #self.log_dict({
+        #    'model/student_parameters': float(param_count),
+        #    'model/student_trainable': float(trainable_count),
+        #}, on_epoch=False, on_step=False)
         
         student_model_name = student_model_config.get('name', 'UnknownStudentModel')
         print(f"Student model: {student_model_name}")
@@ -846,14 +851,14 @@ class ThyroidDistillationModule(pl.LightningModule):
         
         if isinstance(teacher, EnsembleTeacher):
             total_params = sum(sum(p.numel() for p in t.parameters()) for t in teacher.teachers)
-            self.log('model/teacher_ensemble_size', float(len(teacher.teachers)), on_epoch=False, on_step=False)
+            #self.log('model/teacher_ensemble_size', float(len(teacher.teachers)), on_epoch=False, on_step=False)
         else:
             total_params = sum(p.numel() for p in teacher.parameters())
         
-        self.log('model/teacher_parameters', float(total_params), on_epoch=False, on_step=False)
+        #self.log('model/teacher_parameters', float(total_params), on_epoch=False, on_step=False)
         
-        for key, value in metrics.items():
-            self.log(f'teacher/{key}', float(value), on_epoch=False, on_step=False)
+        #for key, value in metrics.items():
+            #self.log(f'teacher/{key}', float(value), on_epoch=False, on_step=False)
         
         return teacher, metrics
     

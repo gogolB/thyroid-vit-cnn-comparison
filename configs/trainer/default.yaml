@@ -7,7 +7,7 @@ devices: 1
 precision: "32-true"  # Changed to string, e.g., "32-true" or "32"
 
 # Training configuration
-max_epochs: ${training.epochs} # Corrected to training.epochs
+max_epochs: 150 # Corrected to training.epochs
 min_epochs: 1
 max_steps: -1
 min_steps: null

@@ -2,10 +2,10 @@
 Configuration for experiments using Hydra.
 """
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Union
-
+from typing import Any, Dict, Optional
 
 from hydra.core.config_store import ConfigStore
+from omegaconf import DictConfig, OmegaConf
 
 
 @dataclass
@@ -26,29 +26,6 @@ class KFoldConfig:
 
 
 @dataclass
-class AblationParameterConfig:
-    """
-    Defines a single parameter to be ablated.
-    """
-    path: str  # Path in the Hydra config, e.g., "model.optimizer.lr"
-    values: List[Any]  # List of values to try for this parameter
-
-
-@dataclass
-class AblationConfig:
-    """
-    Configuration for ablation studies.
-    """
-    name_pattern: str = "ablation_run_{ablation_count}" # Pattern for naming ablation sub-runs
-    # List of parameters and their values to iterate over for ablation.
-    # Each dict should specify 'path' (e.g., 'model.lr') and 'values' (e.g., [0.01, 0.001])
-    parameter_space: List[AblationParameterConfig] = field(default_factory=list)
-    base_config_path: Optional[str] = None  # Path to a base Hydra config (e.g., 'experiment/base_model')
-    # If true, this ablation study is the primary experiment type.
-    is_primary_ablation_experiment: bool = False
-
-
-@dataclass
 class ExperimentConfig:
     """
     Base configuration for an experiment.
@@ -56,7 +33,7 @@ class ExperimentConfig:
     """
     name: str = "base_experiment"
     description: Optional[str] = None
-    output_dir: str = "outputs/" # Hydra will resolve this
+    output_dir: str = "outputs/"  # Hydra will resolve this
     seed: int = 42
 
     # Placeholder for model-specific configurations
@@ -65,35 +42,43 @@ class ExperimentConfig:
     # Placeholder for dataset-specific configurations
     dataset: Any = field(default_factory=dict)
 
-    # Placeholder for trainer-specific configurations (PL Trainer args like accelerator, devices, max_epochs for the run)
+    # Placeholder for trainer-specific configurations
     trainer: Any = field(default_factory=dict)
 
-    # Placeholder for training content configurations (loss, optimizer_params, batch_size, etc.)
+    # Placeholder for training content configurations
     training_content: Any = field(default_factory=dict)
 
     # K-Fold specific configuration
     kfold: Optional[KFoldConfig] = None
 
-    # Ablation study specific configuration
-    ablation: Optional[AblationConfig] = None
-
     # Distillation specific configuration (optional)
     distillation: Optional[Dict[str, Any]] = None
 
-    # Student model configuration, e.g. for distillation (optional)
+    # Student model configuration (optional)
     student_model: Optional[Dict[str, Any]] = None
 
-    # Path to the experiment class to be instantiated (e.g., "src.experiment.standard_experiment.StandardExperiment")
-    # This is used by the ExperimentManager if not a kfold or ablation primary experiment.
+    # Path to the experiment class to be instantiated
     experiment_class_path: Optional[str] = None
 
     # Additional custom parameters
-    params: Dict[str, Any] = field(default_factory=dict)
+    params: Dict[str, Any] = field(default极factory=dict)
 
 
 # Register the configs with Hydra's ConfigStore
 cs = ConfigStore.instance()
-cs.store(name="base_experiment_config_schema", node=ExperimentConfig) # Renamed for clarity
+cs.store(name="base_experiment_config_schema", node=ExperimentConfig)
 cs.store(name="kfold_config_schema", node=KFoldConfig)
-cs.store(name="ablation_config_schema", node=AblationConfig)
-cs.store(name="ablation_parameter_config_schema", node=AblationParameterConfig)
+
+
+def load_config(config_path: str) -> DictConfig:
+    """Load a configuration file and resolve it.
+
+    Args:
+        config_path: Path to the configuration file.
+
+    Returns:
+        DictConfig: The loaded configuration.
+    """
+    config = OmegaConf.load(config_path)
+    OmegaConf.resolve(config)
+    return config

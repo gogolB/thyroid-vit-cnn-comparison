@@ -29,7 +29,7 @@ from src.training.lightning_modules import (
     ThyroidViTModule,
     ThyroidDistillationModule
 )
-from src.utils.logging import get_logger # Assuming a utility for logger setup
+from src.utils.logging import get_logger  # Assuming a utility for logger setup
 
 logger = get_logger(__name__) # Use the utility
 
@@ -430,8 +430,37 @@ class KFoldExperiment(BaseExperiment):
         try:
             # Get the actual runtime output directory resolved by Hydra
             runtime_output_dir = Path(HydraConfig.get().runtime.output_dir)
-            log_file_path = runtime_output_dir / "kfold_summary.json"
+            
+            # Use experiment name prefix from kfold config if available
+            filename = f"kfold_summary_{self.config.kfold.get('experiment_name_prefix', self.config.name)}.json"
+            log_file_path = runtime_output_dir / filename
             log_file_path.parent.mkdir(parents=True, exist_ok=True) # Ensure parent dir exists
+            
+            # Add metadata to aggregated results
+            self.aggregated_results["experiment_name"] = self.config.name
+            self.aggregated_results["model_name"] = self.config.kfold.get("experiment_name_prefix", self.config.name)
+            self.aggregated_results["family"] = "distilled_vit"
+            self.aggregated_results["student_model_name"] = self.config.student_model.get("name", "unknown_student")
+            self.aggregated_results["teacher_model_name"] = self.config.distillation.get("teacher_model_name", "unknown_teacher")
+            
+            # Calculate student model parameters
+            try:
+                student_model = ModelRegistry.create_model(self.config.student_model)
+                student_param_count = sum(p.numel() for p in student_model.parameters())
+                self.aggregated_results["student_param_count"] = student_param_count
+            except Exception as e:
+                logger.error(f"Failed to calculate student model parameters: {e}")
+                self.aggregated_results["student_param_count"] = "N/A"
+            
+            # Add teacher checkpoint paths per fold
+            teacher_checkpoint_paths = []
+            for i, fold_result in enumerate(self.fold_results):
+                if 'teacher_checkpoint' in fold_result:
+                    teacher_checkpoint_paths.append(fold_result['teacher_checkpoint'])
+                else:
+                    teacher_checkpoint_paths.append(f"outputs/densenet161/fold_{i+1}/best_model.pth")
+            
+            self.aggregated_results["teacher_checkpoint_paths_per_fold"] = teacher_checkpoint_paths
             
             with open(log_file_path, 'w') as f:
                 json.dump(self.aggregated_results, f, indent=4)

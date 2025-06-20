@@ -25,6 +25,9 @@ from timm.models.vision_transformer import Block as ViTBlock
 warnings.filterwarnings('ignore')
 console = Console()
 
+sys.path.append(str(Path(__file__).parent.parent))
+from src.config.schemas import DatasetConfig
+
 
 def enhance_contrast(image: np.ndarray) -> np.ndarray:
     """Enhance contrast of CARS microscopy images with 2-98 percentile normalization."""
@@ -49,19 +52,20 @@ class ViTGradCAM:
         self._find_and_register_hook()
 
     def _find_and_register_hook(self):
-        """Finds the final transformer block and hooks its final normalization layer."""
-        target_layer = None
-        for module in reversed(list(self.model.modules())):
-            if isinstance(module, (SwinTransformerBlock, ViTBlock)):
-                target_layer = module.norm2 if hasattr(module, 'norm2') else module.norm1
-                break
+        """
+        --- THE FIX: Target the model's final normalization layer ---
+        This layer exists after all transformer blocks and provides a more stable
+        feature representation for generating heatmaps.
+        """
+        # For timm ViT/Swin models, the final normalization layer is simply named 'norm'
+        target_layer = self.model.model.norm
         
         if target_layer:
             self.handles.append(target_layer.register_forward_hook(self._save_activation))
             self.handles.append(target_layer.register_full_backward_hook(self._save_gradient))
-            console.print(f"[green]✓ Registered Grad-CAM hook on the final transformer block's norm layer.[/green]")
+            console.print(f"[green]✓ Registered Grad-CAM hook on the model's final norm layer.[/green]")
         else:
-            raise ValueError("Could not find a ViT/Swin block in the model.")
+            raise ValueError("Could not find the final 'norm' layer in the model. The model may not be a standard ViT/Swin architecture.")
 
     def _save_activation(self, module, input, output):
         self.activations = output.detach()
@@ -88,7 +92,11 @@ class ViTGradCAM:
         pooled_gradients = torch.mean(self.gradients, dim=[0, 1])
         activations = self.activations.squeeze(0)
 
-        L, C = activations.shape
+        print(f"[cyan]Activations shape: {activations.shape}[/cyan]")
+        if len(activations.shape) == 2:
+            L, C = activations.shape
+        elif len(activations.shape) == 3:
+            L, C, _ = activations.shape
         H = W = int(np.sqrt(L))
         if H * W != L:
             H = W = int(np.sqrt(L - 1))
@@ -103,10 +111,12 @@ class ViTGradCAM:
 
         heatmap = torch.mean(activations, dim=1).squeeze()
         heatmap = F.relu(heatmap)
-        
+
+        print(f"[cyan]Max heatmap value: {torch.max(heatmap)}[/cyan]")
         if torch.max(heatmap) > 0:
             heatmap /= torch.max(heatmap)
-        
+        print(f"[cyan]Normalized heatmap max value: {torch.max(heatmap)}[/cyan]")
+        print(f"[cyan]Heatmap shape before resizing: {heatmap.shape}[/cyan]")
         return heatmap.cpu().numpy().reshape(H, W)
 
     def remove_hooks(self):
@@ -129,14 +139,22 @@ def visualize_final_heatmap(
     model.eval()
     with torch.no_grad():
         output = model(input_tensor.to(device))
+        console.print(f"[cyan]Model output: {output}[/cyan]")
         probabilities = torch.softmax(output, dim=1)
+        console.print(f"[cyan]Model output probabilities: {probabilities}[/cyan]")
         predicted_class = output.argmax(dim=1).item()
+        console.print(f"[green]Predicted class: {predicted_class}[/green]")
         confidence = probabilities[0, predicted_class].item()
 
     class_names = {0: 'Normal', 1: 'Cancerous'}
-    actual_name = class_names[actual_label]
+    if isinstance(actual_label, torch.Tensor):
+        actual_name = class_names[actual_label.item()]
+    else:
+        actual_name = class_names[actual_label]
     predicted_name = class_names[predicted_class]
     is_correct = actual_label == predicted_class
+    console.print(f"[bold blue]Actual: {actual_name} | Predicted: {predicted_name} | Confidence: {confidence:.1%}[/bold blue]")
+
 
     plt.style.use('default')
     fig, axes = plt.subplots(1, 2, figsize=(10, 5), constrained_layout=True)
@@ -150,7 +168,8 @@ def visualize_final_heatmap(
     grad_cam = ViTGradCAM(model)
     heatmap = grad_cam.generate_heatmap(input_tensor.to(device), class_idx=predicted_class)
     grad_cam.remove_hooks()
-    
+
+    print(f"[green]✓ Generated image with shape {img_enhanced.shape}.[/green]")
     heatmap_resized = cv2.resize(heatmap, (img_enhanced.shape[1], img_enhanced.shape[0]), interpolation=cv2.INTER_CUBIC)
     
     # Plot the base image and heatmap overlay
@@ -181,12 +200,34 @@ def visualize_final_heatmap(
 
 def load_vit_model(model_name: str, checkpoint_path: str, device: str = 'cpu') -> Optional[nn.Module]:
     try:
-        checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
-        model = timm.create_model(model_name, pretrained=False, num_classes=2, in_chans=1)
-        state_dict = checkpoint.get('state_dict', checkpoint)
-        state_dict = {k.replace('model.', ''): v for k, v in state_dict.items()}
-        model.load_state_dict(state_dict, strict=False)
-        console.print(f"[green]✓ Loaded {model_name} successfully from {Path(checkpoint_path).name}[/green]")
+        from src.models.vit.vision_transformer import VisionTransformer  # Ensure correct import path
+        from src.models.vit.swin import SwinTransformer  # Ensure correct import path
+        checkpoint = torch.load(
+            checkpoint_path, map_location=device, weights_only=False
+        )
+        
+        from omegaconf import OmegaConf
+
+        if model_name.startswith('swin'):
+            cfg = {
+                'name': "swin_tiny",
+            }
+            cfg = OmegaConf.create(cfg)
+            model = SwinTransformer(config=cfg)
+        else:
+            cfg = {
+                'name': "vit_small",
+            }
+            cfg = OmegaConf.create(cfg)
+            model = VisionTransformer(config=cfg)
+        
+        for key in list(checkpoint['state_dict'].keys()):
+            if key.startswith('model.model.'):
+                new_key = key.replace('model.model.', 'model.')
+                checkpoint['state_dict'][new_key] = checkpoint['state_dict'].pop(key)
+        
+        model.load_state_dict(checkpoint['state_dict'], strict=True)
+        console.print(f"[green]✓ Loaded Vision Transformer model {model_name} from checkpoint: {checkpoint_path}[/green]")
         model.eval()
         return model.to(device)
     except Exception as e:
@@ -196,12 +237,12 @@ def load_vit_model(model_name: str, checkpoint_path: str, device: str = 'cpu') -
 
 def main():
     parser = argparse.ArgumentParser(description="Generate Grad-CAM visualizations for ViT/Swin models.")
-    parser.add_argument('--model-name', type=str, default='swin_tiny', help="The specific ViT/Swin model to visualize.")
+    parser.add_argument('--model-name', type=str, default='vit_tiny', help="The specific ViT/Swin model to visualize.")
     parser.add_argument('--checkpoint', type=str, required=True, help="Path to the trained model checkpoint file (.ckpt).")
     args = parser.parse_args()
     
     checkpoint_path = Path(args.checkpoint)
-    output_dir = Path("outputs/vit_gradcam")
+    output_dir = Path("outputs/vit_small_gradcam")
     output_dir.mkdir(parents=True, exist_ok=True)
     data_dir = Path("data/raw")
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -218,16 +259,27 @@ def main():
         from src.data.dataset import CARSThyroidDataset
         from src.data.quality_preprocessing import create_quality_aware_transform
         transform = create_quality_aware_transform(target_size=224, split='test')
-        dataset = CARSThyroidDataset(root_dir=data_dir, split='test', transform=transform, target_size=224, normalize=False)
-        raw_dataset = CARSThyroidDataset(root_dir=data_dir, split='test', transform=None, target_size=224, normalize=False)
+        dataset_config = DatasetConfig(
+            data_path='data/processed',
+            split='test',
+            transform=transform,
+            target_size=224,
+            normalize=False
+        )
+        dataset = CARSThyroidDataset(config=dataset_config)
+        raw_dataset = CARSThyroidDataset(config=dataset_config)
         if len(dataset) == 0: raise ValueError("Test dataset is empty.")
         all_indices_in_split = list(range(len(dataset)))
         normal_indices = [i for i in all_indices_in_split if dataset.labels[dataset.indices[i]] == 0]
         cancer_indices = [i for i in all_indices_in_split if dataset.labels[dataset.indices[i]] == 1]
         sample_indices_to_process = []
-        if normal_indices: sample_indices_to_process.append(normal_indices[0])
-        if cancer_indices: sample_indices_to_process.append(cancer_indices[0])
-        if not sample_indices_to_process: raise FileNotFoundError("Could not find representative samples in test split.")
+        
+        if normal_indices: 
+            for i in range(0, len(normal_indices)):
+                sample_indices_to_process.append(normal_indices[i])
+        if cancer_indices: 
+            for i in range(0, len(cancer_indices)):
+                sample_indices_to_process.append(cancer_indices[i])
         samples = [(raw_dataset[i][0], dataset[i][0].unsqueeze(0), dataset[i][1]) for i in sample_indices_to_process]
         console.print(f"[green]✓ Found {len(samples)} samples to process.[/green]")
     except Exception as e:
